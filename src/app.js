@@ -5,6 +5,8 @@ import authRoutes from "./controllers/auth.controller.js"; // ← Import your ro
 import userRoutes from "./controllers/user.controller.js"; 
 import escrowRoutes from "./controllers/escrow.controller.js";// ← Import user routes
 import cors from 'cors';
+import { apiLogger } from "./middleware/apiLogger.middleware.js";
+import { authRateLimit, apiRateLimit, userRateLimit } from "./middleware/rateLimit.middleware.js";
 const app = express();
 
 // Middlewares
@@ -16,8 +18,18 @@ app.use(cors({
   origin: 'http://localhost:3000', // Replace with your frontend URL
   credentials: true
 }));
-app.use("/api/auth", authRoutes); // ← Mount as /api/auth/login, /register
-app.use("/api", userRoutes); // ← Mount user routes
-app.use("/api/escrow", escrowRoutes)
+
+// API Request Logging Middleware
+app.use(apiLogger);
+
+// Rate Limiting Middleware
+app.use("/api/auth", authRateLimit); // Stricter limits for auth
+app.use("/api/auth", authRoutes);
+app.use("/api/escrow", apiRateLimit); // Standard API limits
+app.use("/api/escrow", escrowRoutes);
+// Mount escrow routes on /api/escrows path as well for GET /api/escrows
+app.use("/api/escrows", escrowRoutes);
+app.use("/api", userRateLimit); // User endpoints
+app.use("/api", userRoutes);
 
 export default app;
