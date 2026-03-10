@@ -26,6 +26,8 @@ import {
   openDispute,
   addDisputeEvidence,
   resolveDispute,
+  hasOpenDispute,
+  findDisputedEscrows,
   verifyCaptcha,
   confirmAntiFraud,
   flagEscrow,
@@ -40,13 +42,11 @@ const router = express.Router();
 /* ===================== CREATE ESCROW ===================== */
 router.post("/create", async (req, res) => {
   try {
-    // Verify JWT token
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    // Verify JWT from cookie
+    const token = req.cookies.accessToken;
+    if (!token) {
       return res.status(401).json({ logout: true, message: "No token provided" });
     }
-
-    const token = authHeader.substring(7);
 
     let decoded;
     try {
@@ -73,16 +73,27 @@ router.post("/create", async (req, res) => {
     const {
       seller_email,
       amount_btc,
+      amount_ltc,
       item_description,
       item_type,
       protection_terms,
       auto_release,
       anti_fraud_confirmed,
-      currency = "ltc"
+      coin,
+      currency,
     } = req.body;
 
+    // Determine currency: accept "coin" or "currency", default "ltc"
+    const rawCurrency = (coin || currency || "ltc").toLowerCase();
+    if (!["btc", "ltc"].includes(rawCurrency)) {
+      return res.status(400).json({ message: "Invalid currency. Supported: btc, ltc" });
+    }
+
+    // Pick the correct amount based on currency
+    const amount = rawCurrency === "btc" ? amount_btc : (amount_ltc || amount_btc);
+
     // Validation
-    if (!seller_email || !amount_btc || !item_description || !item_type) {
+    if (!seller_email || !amount || !item_description || !item_type) {
       return res.status(400).json({ message: "Missing required fields" });
     }
 
@@ -90,7 +101,7 @@ router.post("/create", async (req, res) => {
       return res.status(400).json({ message: "Invalid item type" });
     }
 
-    if (amount_btc <= 0) {
+    if (amount <= 0) {
       return res.status(400).json({ message: "Amount must be greater than 0" });
     }
 
@@ -104,21 +115,18 @@ router.post("/create", async (req, res) => {
       return res.status(400).json({ message: "Cannot create escrow with yourself" });
     }
 
-    // Validate currency
-    if (!["btc", "ltc"].includes(currency.toLowerCase())) {
-      return res.status(400).json({ message: "Invalid currency. Supported: btc, ltc" });
+    // Parse auto_release to a number of hours (handles "24h" or 24)
+    let autoReleaseHours = 24;
+    if (auto_release) {
+      autoReleaseHours = parseInt(String(auto_release).replace(/\D/g, ""), 10) || 24;
     }
-
-    const currencyLower = currency.toLowerCase();
-    const feeBTC = amount_btc * 0.01; // 1% fee
-    const escrowId = `escrow_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
     // Allocate deposit address based on currency
     let depositAddress;
     try {
-      const addressResult = currencyLower === "btc"
-        ? await allocateBtcAddress({ id: escrowId })
-        : await allocateLtcAddress({ id: escrowId });
+      const addressResult = rawCurrency === "btc"
+        ? await allocateBtcAddress({ id: `escrow_temp_${Date.now()}` })
+        : await allocateLtcAddress({ id: `escrow_temp_${Date.now()}` });
       depositAddress = addressResult.address;
     } catch (error) {
       console.error("Address allocation error:", error);
@@ -126,21 +134,17 @@ router.post("/create", async (req, res) => {
     }
 
     const escrow = await createEscrow({
-      escrowId,
       buyerId: userId,
-      buyerIp: req.ip,
-      buyerUserAgent: req.headers["user-agent"],
       buyerEmail: buyer.email,
       sellerId: seller.userId,
       sellerEmail: seller_email,
       itemDescription: item_description,
       itemType: item_type,
       protection: protection_terms || "Standard protection",
-      autoReleaseHours: auto_release || 24,
-      amountBTC: amount_btc,
-      feeBTC,
+      autoReleaseHours,
+      amount,
       depositAddress,
-      currency: currencyLower
+      currency: rawCurrency,
     });
 
     if (!anti_fraud_confirmed) {
@@ -152,10 +156,8 @@ router.post("/create", async (req, res) => {
       message: "Escrow created successfully",
       escrowId: escrow.escrowId,
       depositAddress,
-      currency: currencyLower,
-      amountRequired: amount_btc,
-      fee: feeBTC,
-      totalAmount: amount_btc + feeBTC,
+      currency: rawCurrency.toUpperCase(),
+      amountRequired: amount,
       status: escrow.status,
       expiresAt: escrow.expiresAt,
     });
@@ -167,13 +169,11 @@ router.post("/create", async (req, res) => {
 /* ===================== GET ALL ESCROWS FOR USER ===================== */
 router.get("/", async (req, res) => {
   try {
-    // Verify JWT token
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    // Verify JWT from cookie
+    const token = req.cookies.accessToken;
+    if (!token) {
       return res.status(401).json({ logout: true, message: "No token provided" });
     }
-
-    const token = authHeader.substring(7);
 
     let decoded;
     try {
@@ -204,9 +204,8 @@ router.get("/", async (req, res) => {
       escrowId: escrow.escrowId,
       buyer_email: escrow.buyer?.email || escrow.buyerEmail,
       seller_email: escrow.seller?.email || escrow.sellerEmail,
-      amount_btc: escrow.financials?.amountBTC || escrow.amountBTC,
-      amount_ltc: escrow.financials?.amountLTC || escrow.amountLTC || null,
-      coin: escrow.financials?.currency?.toUpperCase() || "BTC",
+      amount: escrow.financials?.amount || escrow.financials?.amountBTC || 0,
+      coin: (escrow.financials?.currency || "BTC").toUpperCase(),
       status: escrow.status,
       item_description: escrow.item?.description || escrow.itemDescription,
       item_type: escrow.item?.type || escrow.itemType,
@@ -221,8 +220,6 @@ router.get("/", async (req, res) => {
       auto_release_at: escrow.terms?.autoReleaseAt || escrow.autoReleaseAt,
       protection_level: escrow.terms?.protection || escrow.protection || "standard",
       anti_fraud_confirmed: escrow.security?.antiFraudConfirmed || escrow.antiFraudConfirmed || false,
-      buyer_name: escrow.buyer?.username || "User",
-      seller_name: escrow.seller?.username || "User",
     }));
 
     res.status(200).json({ escrows });
@@ -235,13 +232,11 @@ router.get("/", async (req, res) => {
 /* ===================== GET ESCROW DETAIL ===================== */
 router.post("/detail/:id", async (req, res) => {
   try {
-    // Verify JWT token
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    // Verify JWT from cookie
+    const token = req.cookies.accessToken;
+    if (!token) {
       return res.status(401).json({ logout: true, message: "No token provided" });
     }
-
-    const token = authHeader.substring(7);
 
     let decoded;
     try {
@@ -287,7 +282,6 @@ router.post("/detail/:id", async (req, res) => {
       escrowId: escrow.escrowId,
       buyer: {
         userId: buyerId,
-        ip: escrow.buyerIp || null,
         username: buyer?.username || "User",
         email: buyer?.email || escrow.buyerEmail || null,
       },
@@ -306,10 +300,8 @@ router.post("/detail/:id", async (req, res) => {
         autoReleaseAt: escrow.terms?.autoReleaseAt || escrow.autoReleaseAt,
       },
       financials: {
-        currency: escrow.financials?.currency || escrow.currency || "btc",
-        amountBTC: escrow.financials?.amountBTC || escrow.amountBTC,
-        feeBTC: escrow.financials?.feeBTC || escrow.feeBTC,
-        totalBTC: (escrow.financials?.amountBTC || escrow.amountBTC) + (escrow.financials?.feeBTC || escrow.feeBTC),
+        currency: (escrow.financials?.currency || "BTC").toUpperCase(),
+        amount: escrow.financials?.amount || escrow.financials?.amountBTC || 0,
         depositAddress: escrow.financials?.depositAddress || escrow.depositAddress,
         txId: escrow.financials?.txId || escrow.txId || null,
         confirmations: escrow.financials?.confirmations || 0,
@@ -342,6 +334,186 @@ router.post("/detail/:id", async (req, res) => {
   } catch (error) {
     console.error("Get Escrow Detail Error:", error);
     res.status(500).json({ message: "Error retrieving escrow details", error: error.message });
+  }
+});
+
+/* ===================== DISPUTE ROUTES ===================== */
+const VALID_DISPUTE_REASONS = [
+  "Item not received",
+  "Item damaged or different",
+  "Fraud or scam",
+  "Poor quality",
+  "Communication issue",
+  "Other",
+];
+
+/* ===================== GET /api/escrow/disputes ===================== */
+router.get("/disputes", async (req, res) => {
+  try {
+    // Verify JWT from cookie
+    const token = req.cookies.accessToken;
+    if (!token) {
+      return res.status(401).json({ logout: true, message: "No token provided" });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (error) {
+      return res.status(401).json({ logout: true, message: "Invalid token" });
+    }
+
+    const { sessionId, userId } = decoded;
+
+    // Verify session
+    const session = await findBySessionId(sessionId);
+    if (!session || !session.valid || session.expiresAt < new Date()) {
+      return res.status(401).json({ logout: true, message: "Session expired" });
+    }
+
+    // Collect all escrow IDs where user is buyer or seller
+    const buyerEscrows = await findByBuyerId(userId);
+    const sellerEscrows = await findBySellerId(userId);
+    const allEscrows = [...(buyerEscrows || []), ...(sellerEscrows || [])];
+
+    const escrowIds = allEscrows.map((e) => e.escrowId);
+    if (escrowIds.length === 0) {
+      return res.status(200).json([]);
+    }
+
+    // Fetch disputed escrows with optional filters
+    const { status, limit, offset } = req.query;
+    const disputedEscrows = await findDisputedEscrows(escrowIds, { status, limit, offset });
+
+    // Resolve usernames for buyer / seller
+    const userCache = {};
+    const resolveUsername = async (uid) => {
+      if (!uid) return null;
+      if (userCache[uid]) return userCache[uid];
+      const user = await findByUserId(uid);
+      const username = user?.username || null;
+      userCache[uid] = username;
+      return username;
+    };
+
+    const result = [];
+    for (const escrow of disputedEscrows) {
+      const d = escrow.dispute;
+      const buyerUid = escrow.buyer?.userId || null;
+      const sellerUid = escrow.seller?.userId || null;
+
+      result.push({
+        escrowId: escrow.escrowId,
+        reason: d.reason,
+        evidence: d.evidence,
+        openedBy: d.openedBy,
+        openedAt: d.openedAt,
+        resolved: d.resolved,
+        resolution: d.resolution,
+        resolvedBy: d.resolvedBy,
+        resolvedAt: d.resolvedAt,
+        escrowAmount: escrow.financials?.amount || escrow.financials?.amountBTC || 0,
+        escrowCoin: (escrow.financials?.currency || "btc").toUpperCase(),
+        buyerUsername: await resolveUsername(buyerUid),
+        sellerUsername: await resolveUsername(sellerUid),
+        status: d.status,
+        severity: d.severity,
+      });
+    }
+
+    res.status(200).json(result);
+  } catch (error) {
+    console.error("Get Disputes Error:", error);
+    res.status(500).json({ message: "Error retrieving disputes", error: error.message });
+  }
+});
+
+/* ===================== POST /api/escrow/disputes ===================== */
+router.post("/disputes", async (req, res) => {
+  try {
+    // Verify JWT from cookie
+    const token = req.cookies.accessToken;
+    if (!token) {
+      return res.status(401).json({ logout: true, message: "No token provided" });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (error) {
+      return res.status(401).json({ logout: true, message: "Invalid token" });
+    }
+
+    const { sessionId, userId } = decoded;
+
+    // Verify session
+    const session = await findBySessionId(sessionId);
+    if (!session || !session.valid || session.expiresAt < new Date()) {
+      return res.status(401).json({ logout: true, message: "Session expired" });
+    }
+
+    const { escrowId, reason, evidence } = req.body;
+
+    // Validate required fields
+    if (!escrowId || !reason || !evidence) {
+      return res.status(400).json({ message: "Missing required fields: escrowId, reason, evidence" });
+    }
+
+    // Validate reason
+    if (!VALID_DISPUTE_REASONS.includes(reason)) {
+      return res.status(400).json({
+        message: `Invalid reason. Must be one of: ${VALID_DISPUTE_REASONS.join(", ")}`,
+      });
+    }
+
+    // Find the escrow
+    const escrow = await findByEscrowId(escrowId);
+    if (!escrow) {
+      return res.status(404).json({ message: "Escrow not found" });
+    }
+
+    // Ensure the user is a party to the escrow
+    const buyerId = escrow.buyer?.userId || escrow.buyerId;
+    const sellerId = escrow.seller?.userId || escrow.sellerId;
+    if (userId !== buyerId && userId !== sellerId) {
+      return res.status(403).json({ message: "You are not a party to this escrow" });
+    }
+
+    // Check for existing open dispute
+    const existingDispute = await hasOpenDispute(escrowId);
+    if (existingDispute) {
+      return res.status(409).json({ message: "A dispute already exists for this escrow" });
+    }
+
+    // Open dispute on the escrow document
+    const role = userId === buyerId ? "buyer" : "seller";
+    await openDispute(escrowId, {
+      openedBy: role,
+      reason,
+      evidence,
+    });
+
+    // Re-fetch to get the updated dispute data
+    const updated = await findByEscrowId(escrowId);
+    const d = updated.dispute;
+
+    res.status(201).json({
+      escrowId: updated.escrowId,
+      reason: d.reason,
+      evidence: d.evidence,
+      openedBy: d.openedBy,
+      openedAt: d.openedAt,
+      resolved: d.resolved,
+      resolution: d.resolution,
+      resolvedBy: d.resolvedBy,
+      resolvedAt: d.resolvedAt,
+      status: d.status,
+      severity: d.severity,
+      message: "Dispute created successfully",
+    });
+  } catch (error) {
+    console.error("Create Dispute Error:", error);
+    res.status(500).json({ message: "Error creating dispute", error: error.message });
   }
 });
 

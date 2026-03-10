@@ -36,3 +36,10 @@ export function getDB() {
   return db;
 }
 
+export function getClient() {
+  if (!client) {
+    throw new Error("❌ MongoClient not initialized. Call connectDB() first.");
+  }
+  return client;
+}
+

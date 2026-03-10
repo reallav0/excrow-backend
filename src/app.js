@@ -3,7 +3,8 @@ import cookieParser from "cookie-parser";
 import passport from "passport";
 import authRoutes from "./controllers/auth.controller.js"; // ← Import your route file
 import userRoutes from "./controllers/user.controller.js"; 
-import escrowRoutes from "./controllers/escrow.controller.js";// ← Import user routes
+import escrowRoutes from "./controllers/escrow.controller.js";
+import chatRoutes from "./controllers/chat.controller.js";
 import cors from 'cors';
 import { apiLogger } from "./middleware/apiLogger.middleware.js";
 import { authRateLimit, apiRateLimit, userRateLimit } from "./middleware/rateLimit.middleware.js";
@@ -27,6 +28,8 @@ app.use("/api/auth", authRateLimit); // Stricter limits for auth
 app.use("/api/auth", authRoutes);
 app.use("/api/escrow", apiRateLimit); // Standard API limits
 app.use("/api/escrow", escrowRoutes);
+app.use("/api/escrow/chat", apiRateLimit);
+app.use("/api/escrow/chat", chatRoutes);
 // Mount escrow routes on /api/escrows path as well for GET /api/escrows
 app.use("/api/escrows", escrowRoutes);
 app.use("/api", userRateLimit); // User endpoints

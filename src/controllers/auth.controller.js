@@ -94,7 +94,7 @@ router.post("/register", async (req, res) => {
     );
 
     // Set cookie
-    res.cookie("token", token, {
+    res.cookie("accessToken", token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "Lax",
@@ -102,7 +102,7 @@ router.post("/register", async (req, res) => {
     });
 
     res.status(201).json({
-      accessToken: token,
+      message: "Registration successful",
       username: user.username,
     });
   } catch (error) {
@@ -159,7 +159,7 @@ router.post("/login", async (req, res) => {
     );
 
     // Set cookie
-    res.cookie("token", token, {
+    res.cookie("accessToken", token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "Lax",
@@ -167,7 +167,7 @@ router.post("/login", async (req, res) => {
     });
 
     res.status(200).json({
-      accessToken: token,
+      message: "Login successful",
       username: user.username,
     });
   }catch{
@@ -425,7 +425,7 @@ async function handleSocialLogin({
       { expiresIn: "15m" }
     );
 
-    res.cookie("token", token, {
+    res.cookie("accessToken", token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "Lax",
@@ -433,7 +433,7 @@ async function handleSocialLogin({
     });
 
     res.status(200).json({
-      accessToken: token,
+      message: "Login successful",
       username: user.username,
     });
   } catch (err) {

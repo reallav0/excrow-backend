@@ -10,13 +10,11 @@ const router = express.Router();
 /* ------------------ GET USER ------------------ */
 router.get("/user", async (req, res) => {
   try {
-    // Get token from Authorization header (Bearer token)
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    // Get token from cookie
+    const token = req.cookies.accessToken;
+    if (!token) {
       return res.status(401).json({ logout: true, message: "No token provided" });
     }
-
-    const token = authHeader.substring(7); 
 
     // Verify JWT
     let decoded;

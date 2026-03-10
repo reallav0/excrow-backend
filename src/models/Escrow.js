@@ -6,14 +6,14 @@ const COLLECTION = "escrows";
 
 /**
  * Generate a unique public escrow ID based on multiple entropy sources
- * Combines: BTC amount, both emails, timestamp, and IP for maximum randomness
+ * Combines: amount, both emails, timestamp for maximum randomness
  */
-function generateEscrowId(amountBTC, buyerEmail, sellerEmail, buyerIp) {
+function generateEscrowId(amount, buyerEmail, sellerEmail) {
   // Create a hash input combining all entropy sources
   const timestamp = Date.now().toString();
   const randomBytes = crypto.randomBytes(8).toString('hex');
   
-  const hashInput = `${amountBTC}|${buyerEmail}|${sellerEmail}|${buyerIp}|${timestamp}|${randomBytes}`;
+  const hashInput = `${amount}|${buyerEmail}|${sellerEmail}|${timestamp}|${randomBytes}`;
   
   // Generate SHA256 hash
   const hash = crypto.createHash('sha256').update(hashInput).digest('hex');
@@ -35,8 +35,6 @@ function generateEscrowId(amountBTC, buyerEmail, sellerEmail, buyerIp) {
  */
 export async function createEscrow({
   buyerId,
-  buyerIp,
-  buyerUserAgent,
   buyerEmail,
   sellerId,
   sellerEmail,
@@ -44,8 +42,8 @@ export async function createEscrow({
   itemType,
   protection,
   autoReleaseHours,
-  amountBTC,
-  feeBTC,
+  amount,
+  currency,
   depositAddress,
 }) {
   const db = getDB();
@@ -53,16 +51,17 @@ export async function createEscrow({
   const autoReleaseAt = new Date(Date.now() + autoReleaseHours * 60 * 60 * 1000);
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
 
+  const curr = (currency || "btc").toUpperCase(); // "BTC" | "LTC"
+
   const escrow = {
     // Identity
-    escrowId: generateEscrowId(amountBTC, buyerEmail, sellerEmail, buyerIp),
+    escrowId: generateEscrowId(amount, buyerEmail, sellerEmail),
     internalId: new ObjectId(),
 
     // Parties
     buyer: {
       userId: buyerId,
-      ip: buyerIp,
-      userAgent: buyerUserAgent,
+      email: buyerEmail,
     },
 
     seller: {
@@ -85,10 +84,8 @@ export async function createEscrow({
 
     // Financials
     financials: {
-      currency: "BTC",
-      amountBTC,
-      feeBTC,
-      totalBTC: amountBTC + feeBTC,
+      currency: curr,
+      amount,
       depositAddress,
       txId: null,
       confirmations: 0,
@@ -329,9 +326,25 @@ export async function expireEscrow(escrowId) {
 }
 
 /**
+ * Compute severity based on dispute reason
+ */
+function computeSeverity(reason) {
+  const highSeverity = [
+    "Item not received",
+    "Fraud or scam",
+    "Item damaged or different",
+  ];
+  const mediumSeverity = ["Poor quality", "Communication issue"];
+
+  if (highSeverity.includes(reason)) return "high";
+  if (mediumSeverity.includes(reason)) return "medium";
+  return "low";
+}
+
+/**
  * Open a dispute
  */
-export async function openDispute(escrowId, { openedBy, reason }) {
+export async function openDispute(escrowId, { openedBy, reason, evidence }) {
   const db = getDB();
   return db.collection(COLLECTION).updateOne(
     { escrowId },
@@ -341,10 +354,50 @@ export async function openDispute(escrowId, { openedBy, reason }) {
         "dispute.opened": true,
         "dispute.openedBy": openedBy, // "buyer" | "seller"
         "dispute.reason": reason,
+        "dispute.evidence": evidence || [],
+        "dispute.openedAt": new Date(),
+        "dispute.severity": computeSeverity(reason),
+        "dispute.status": "open",
         updatedAt: new Date(),
       },
     }
   );
+}
+
+/**
+ * Check if an escrow already has an open (unresolved) dispute
+ */
+export async function hasOpenDispute(escrowId) {
+  const db = getDB();
+  return db.collection(COLLECTION).findOne({
+    escrowId,
+    "dispute.opened": true,
+    "dispute.resolved": false,
+  });
+}
+
+/**
+ * Find all disputed escrows for a set of escrowIds with optional filters
+ */
+export async function findDisputedEscrows(escrowIds, { status, limit, offset } = {}) {
+  const db = getDB();
+
+  const query = {
+    escrowId: { $in: escrowIds },
+    "dispute.opened": true,
+  };
+  if (status === "open") query["dispute.resolved"] = false;
+  else if (status === "resolved") query["dispute.resolved"] = true;
+
+  let cursor = db
+    .collection(COLLECTION)
+    .find(query)
+    .sort({ "dispute.openedAt": -1 });
+
+  if (offset) cursor = cursor.skip(Number(offset));
+  if (limit) cursor = cursor.limit(Number(limit));
+
+  return cursor.toArray();
 }
 
 /**
@@ -387,6 +440,7 @@ export async function resolveDispute(escrowId, { resolution, resolvedBy }) {
         "dispute.resolution": resolution, // "release" | "refund"
         "dispute.resolvedBy": resolvedBy, // "admin" | "system"
         "dispute.resolvedAt": new Date(),
+        "dispute.status": "resolved",
         completedAt: resolution === "release" ? new Date() : null,
         cancelledAt: resolution === "refund" ? new Date() : null,
         updatedAt: new Date(),
