@@ -5,12 +5,13 @@
  * within an escrow via Socket.IO.
  *
  * Events:
- *   IN  → "chat:send"    { escrowId, token, text }
+ *   IN  → "chat:send"    { escrowId, text }
  *   OUT → "chat:message"  { _id, escrowId, userId, email, text, read, createdAt }
  *   OUT → "chat:error"    { message }
  */
 
 import jwt from "jsonwebtoken";
+import cookie from "cookie";
 import { findBySessionId } from "../models/SessionStore.js";
 import { findByUserId } from "../models/User.js";
 import { findByEscrowId } from "../models/Escrow.js";
@@ -25,15 +26,27 @@ export function setupChatSocket(io) {
 
     socket.on("chat:send", async (data) => {
       try {
-        const { escrowId, token, text } = data || {};
+        const { escrowId, text } = data || {};
 
         // Validate input
-        if (!escrowId || !token || !text || typeof text !== "string" || text.trim().length === 0) {
-          return socket.emit("chat:error", { message: "Missing escrowId, token, or text" });
+        if (!escrowId || !text || typeof text !== "string" || text.trim().length === 0) {
+          return socket.emit("chat:error", { message: "Missing escrowId or text" });
         }
 
         if (text.trim().length > 2000) {
           return socket.emit("chat:error", { message: "Message too long (max 2000 chars)" });
+        }
+
+        // Extract token from cookies
+        const cookieHeader = socket.handshake.headers?.cookie;
+        if (!cookieHeader) {
+          return socket.emit("chat:error", { message: "Not authenticated" });
+        }
+
+        const cookies = cookie.parse(cookieHeader);
+        const token = cookies.accessToken;
+        if (!token) {
+          return socket.emit("chat:error", { message: "Not authenticated" });
         }
 
         // Authenticate via JWT
