@@ -1,7 +1,7 @@
 import { getDB } from "../../config/db.js";
-import { NETWORK } from "../wallet/ltc.service.js";
+import { NETWORK } from "../wallet/btc.service.js";
 
-const ADDRESSES_COLL = "addresses";
+const ADDRESSES_COLL = "addresses_btc";
 
 export async function lockUtxo({ address, txid, vout, lockedBy }) {
   const db = getDB();
