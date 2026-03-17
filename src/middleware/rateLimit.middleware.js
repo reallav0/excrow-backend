@@ -146,8 +146,13 @@ export const createRateLimitMiddleware = (configKey = "api") => {
     // Get authenticated user ID if available
     let userId = null;
     try {
-      if (req.headers.authorization?.startsWith("Bearer ")) {
-        const token = req.headers.authorization.substring(7);
+      const tokenFromHeader = req.headers.authorization?.startsWith("Bearer ")
+        ? req.headers.authorization.substring(7)
+        : null;
+      const tokenFromCookie = req.cookies?.accessToken || req.cookies?.sessionToken || null;
+      const token = tokenFromHeader || tokenFromCookie;
+
+      if (token) {
         const decoded = JSON.parse(Buffer.from(token.split(".")[1], "base64").toString());
         userId = decoded.userId;
       }

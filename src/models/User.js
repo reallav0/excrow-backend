@@ -156,10 +156,29 @@ export async function findByUserId(userId) {
 }
 
 /* ------------------------
-   UPDATE FIELDS
+   UPDATE FIELDS (with whitelist to prevent privilege escalation)
 ------------------------- */
-export async function updateUser(userId, updates) {
+const ALLOWED_USER_UPDATES = new Set([
+  "username", "displayName", "avatar", "bio", "birthdate",
+]);
+
+export async function updateUser(userId, updates, { isInternal = false } = {}) {
   const db = getDB();
+
+  // Unless called internally, only allow whitelisted fields
+  if (!isInternal) {
+    const filtered = {};
+    for (const key of Object.keys(updates)) {
+      if (ALLOWED_USER_UPDATES.has(key)) {
+        filtered[key] = updates[key];
+      }
+    }
+    updates = filtered;
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return { modifiedCount: 0 };
+  }
 
   updates.updatedAt = new Date();
 

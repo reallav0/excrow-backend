@@ -22,6 +22,7 @@
     "ecpair": "^3.0.0",
     "express-ip": "^1.0.4",
     "express.js": "^1.0.0",
+    "helmet": "^8.0.0",
     "jsonwebtoken": "^9.0.3",
     "mongodb": "^7.0.0",
     "mongoose": "^9.0.0",
@@ -29,6 +30,7 @@
     "passport-facebook": "^3.0.0",
     "passport-google-oauth": "^2.0.0",
     "socket.io": "^4.8.3",
-    "tiny-secp256k1": "^2.2.4"
+    "tiny-secp256k1": "^2.2.4",
+    "ws": "^8.18.3"
   }
 }

@@ -18,9 +18,89 @@ import {
 import {
   createSession,
   invalidateAllUserSessions,
+  invalidateSession,
+  findByRefreshToken,
+  rotateRefreshToken,
 } from "../models/SessionStore.js";
 
+import {
+  validatePassword,
+  validateEmail,
+  validateUsername,
+} from "../utils/validator.js";
+
 const router = express.Router();
+
+/* ============ LOGIN BRUTE-FORCE PROTECTION ============ */
+const loginAttempts = new Map();
+const MAX_FAILED_ATTEMPTS = 5;
+const LOCKOUT_DURATION_MS = 15 * 60 * 1000; // 15 minutes
+const ATTEMPT_WINDOW_MS = 15 * 60 * 1000;
+
+function checkLoginLockout(email) {
+  const key = email.toLowerCase();
+  const record = loginAttempts.get(key);
+  if (!record) return { locked: false };
+  if (record.lockedUntil && record.lockedUntil > Date.now()) {
+    return { locked: true, retryAfter: Math.ceil((record.lockedUntil - Date.now()) / 1000) };
+  }
+  if (record.firstAttempt + ATTEMPT_WINDOW_MS < Date.now()) {
+    loginAttempts.delete(key);
+    return { locked: false };
+  }
+  return { locked: false };
+}
+
+function recordFailedLogin(email) {
+  const key = email.toLowerCase();
+  const record = loginAttempts.get(key) || { count: 0, firstAttempt: Date.now() };
+  record.count++;
+  if (record.count >= MAX_FAILED_ATTEMPTS) {
+    record.lockedUntil = Date.now() + LOCKOUT_DURATION_MS;
+  }
+  loginAttempts.set(key, record);
+}
+
+function clearLoginAttempts(email) {
+  loginAttempts.delete(email.toLowerCase());
+}
+
+// Cleanup stale lockout records every 30 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, record] of loginAttempts.entries()) {
+    if (record.firstAttempt + ATTEMPT_WINDOW_MS < now && (!record.lockedUntil || record.lockedUntil < now)) {
+      loginAttempts.delete(key);
+    }
+  }
+}, 30 * 60 * 1000);
+
+/* ============ TOKEN / COOKIE HELPERS ============ */
+const ACCESS_TOKEN_EXPIRY = "15m";
+const ACCESS_COOKIE_MAX_AGE = 15 * 60 * 1000; // 15 min
+const REFRESH_COOKIE_MAX_AGE = 7 * 24 * 60 * 60 * 1000; // 7 days
+const SESSION_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000;
+
+function setAuthCookies(res, accessToken, refreshToken) {
+  res.cookie("accessToken", accessToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "Lax",
+    maxAge: ACCESS_COOKIE_MAX_AGE,
+  });
+  res.cookie("refreshToken", refreshToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "Lax",
+    maxAge: REFRESH_COOKIE_MAX_AGE,
+    path: "/api/auth",
+  });
+}
+
+function clearAuthCookies(res) {
+  res.clearCookie("accessToken");
+  res.clearCookie("refreshToken", { path: "/api/auth" });
+}
 
 // Function to verify reCAPTCHA
 async function verifyRecaptcha(captchaToken) {
@@ -53,6 +133,22 @@ router.post("/register", async (req, res) => {
       return res.status(400).json({ message: "Missing required fields" });
     }
 
+    // Validate input formats
+    const emailCheck = validateEmail(email);
+    if (!emailCheck.valid) {
+      return res.status(400).json({ message: emailCheck.errors[0] });
+    }
+
+    const usernameCheck = validateUsername(username);
+    if (!usernameCheck.valid) {
+      return res.status(400).json({ message: usernameCheck.errors[0] });
+    }
+
+    const passwordCheck = validatePassword(password);
+    if (!passwordCheck.valid) {
+      return res.status(400).json({ message: passwordCheck.errors[0], errors: passwordCheck.errors });
+    }
+
     // Username exists?
     if (await findByUsername(username)) {
       return res.status(400).json({ message: "Username already in use" });
@@ -71,35 +167,28 @@ router.post("/register", async (req, res) => {
       birthdate,
     });
 
-    // Create session
+    // Create session with refresh token
     const sessionId = crypto.randomUUID();
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const refreshToken = crypto.randomUUID();
+    const expiresAt = new Date(Date.now() + SESSION_EXPIRY_MS);
 
     await createSession({
       sessionId,
       userId: user.userId,
+      refreshToken,
       ip: req.ip,
       userAgent: req.headers["user-agent"],
       expiresAt,
     });
 
-    // Create JWT
-    const token = jwt.sign(
-      {
-        sessionId,
-        userId: user.userId,
-      },
+    // Short-lived access token (15 min)
+    const accessToken = jwt.sign(
+      { sessionId, userId: user.userId },
       process.env.JWT_SECRET,
-      { expiresIn: "7d" }
+      { expiresIn: ACCESS_TOKEN_EXPIRY }
     );
 
-    // Set cookie
-    res.cookie("accessToken", token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "Lax",
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
+    setAuthCookies(res, accessToken, refreshToken);
 
     res.status(201).json({
       message: "Registration successful",
@@ -107,7 +196,7 @@ router.post("/register", async (req, res) => {
     });
   } catch (error) {
     console.error("Register Error:", error);
-    res.status(500).json({ message: "Error registering user", error });
+    res.status(500).json({ message: "Error registering user" });
   }
 });
 
@@ -116,62 +205,75 @@ router.post("/login", async (req, res) => {
   try {
     const { email, password, captchaToken } = req.body;
 
+    if (!email || !password) {
+      return res.status(400).json({ message: "Email and password are required" });
+    }
+
     // Verify reCAPTCHA
     const isCaptchaValid = await verifyRecaptcha(captchaToken);
     if (!isCaptchaValid) {
       return res.status(400).json({ message: "reCAPTCHA verification failed" });
     }
 
+    // Check brute-force lockout
+    const lockout = checkLoginLockout(email);
+    if (lockout.locked) {
+      return res.status(429).json({
+        message: "Too many failed login attempts. Please try again later.",
+        retryAfter: lockout.retryAfter,
+      });
+    }
+
     const user = await findByEmail(email);
- 
+
+    // Generic message to prevent user enumeration
     if (!user) {
-      return res.status(400).json({ message: "Email not found!" });
+      recordFailedLogin(email);
+      return res.status(401).json({ message: "Invalid email or password" });
     }
 
-    const valid = await bcrypt.compareSync(password, user.passwordHash);
+    // FIX: use async bcrypt.compare instead of compareSync
+    const valid = await bcrypt.compare(password, user.passwordHash);
     if (!valid) {
-      return res.status(400).json({ message: "Wrong email/password combination!" });
+      recordFailedLogin(email);
+      return res.status(401).json({ message: "Invalid email or password" });
     }
 
- 
+    // Successful login → clear lockout tracker
+    clearLoginAttempts(email);
+
     await invalidateAllUserSessions(user.userId);
 
-    // Create new session
+    // Create new session with refresh token
     const sessionId = crypto.randomUUID();
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const refreshToken = crypto.randomUUID();
+    const expiresAt = new Date(Date.now() + SESSION_EXPIRY_MS);
 
     await createSession({
       sessionId,
       userId: user.userId,
+      refreshToken,
       ip: req.ip,
       userAgent: req.headers["user-agent"],
       expiresAt,
     });
 
-    // Create JWT
-    const token = jwt.sign(
-      {
-        sessionId,
-        userId: user.userId,
-      },
+    // Short-lived access token (15 min)
+    const accessToken = jwt.sign(
+      { sessionId, userId: user.userId },
       process.env.JWT_SECRET,
-      { expiresIn: "7d" }
+      { expiresIn: ACCESS_TOKEN_EXPIRY }
     );
 
-    // Set cookie
-    res.cookie("accessToken", token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "Lax",
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
+    setAuthCookies(res, accessToken, refreshToken);
 
     res.status(200).json({
       message: "Login successful",
       username: user.username,
     });
-  }catch{
-
+  } catch (error) {
+    console.error("Login Error:", error);
+    res.status(500).json({ message: "Error logging in" });
   }
 });
 
@@ -387,6 +489,66 @@ router.get("/discord/callback", async (req, res) => {
 
 
 /* ======================================================
+   TOKEN REFRESH ENDPOINT
+====================================================== */
+router.post("/refresh", async (req, res) => {
+  try {
+    const refreshToken = req.cookies.refreshToken;
+    if (!refreshToken) {
+      return res.status(401).json({ logout: true, message: "No refresh token" });
+    }
+
+    // Find valid session by refresh token
+    const session = await findByRefreshToken(refreshToken);
+    if (!session || !session.valid || session.expiresAt < new Date()) {
+      clearAuthCookies(res);
+      return res.status(401).json({ logout: true, message: "Session expired" });
+    }
+
+    // Rotate refresh token (prevents reuse / replay)
+    const newRefreshToken = crypto.randomUUID();
+    await rotateRefreshToken(session.sessionId, newRefreshToken);
+
+    // Issue new short-lived access token
+    const accessToken = jwt.sign(
+      { sessionId: session.sessionId, userId: session.userId },
+      process.env.JWT_SECRET,
+      { expiresIn: ACCESS_TOKEN_EXPIRY }
+    );
+
+    setAuthCookies(res, accessToken, newRefreshToken);
+
+    res.status(200).json({ message: "Token refreshed" });
+  } catch (error) {
+    console.error("Refresh Error:", error);
+    res.status(500).json({ message: "Error refreshing token" });
+  }
+});
+
+/* ======================================================
+   LOGOUT ENDPOINT
+====================================================== */
+router.post("/logout", async (req, res) => {
+  try {
+    const token = req.cookies.accessToken;
+    if (token) {
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET, { ignoreExpiration: true });
+        await invalidateSession(decoded.sessionId);
+      } catch {
+        // Token malformed — just clear cookies
+      }
+    }
+
+    clearAuthCookies(res);
+    res.status(200).json({ message: "Logged out" });
+  } catch (error) {
+    console.error("Logout Error:", error);
+    res.status(500).json({ message: "Error logging out" });
+  }
+});
+
+/* ======================================================
    🔐 CENTRAL OAUTH LOGIN HANDLER
 ====================================================== */
 async function handleSocialLogin({
@@ -409,28 +571,25 @@ async function handleSocialLogin({
     await invalidateAllUserSessions(user.userId);
 
     const sessionId = randomUUID();
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const refreshToken = randomUUID();
+    const expiresAt = new Date(Date.now() + SESSION_EXPIRY_MS);
 
     await createSession({
       sessionId,
       userId: user.userId,
+      refreshToken,
       ip: req.ip,
       userAgent: req.headers["user-agent"],
       expiresAt,
     });
 
-    const token = jwt.sign(
+    const accessToken = jwt.sign(
       { sessionId, userId: user.userId },
       process.env.JWT_SECRET,
-      { expiresIn: "15m" }
+      { expiresIn: ACCESS_TOKEN_EXPIRY }
     );
 
-    res.cookie("accessToken", token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "Lax",
-      maxAge: 15 * 60 * 1000,
-    });
+    setAuthCookies(res, accessToken, refreshToken);
 
     res.status(200).json({
       message: "Login successful",

@@ -1,10 +1,7 @@
 import express from "express";
-import bcrypt from "bcrypt";
-import jwt from "jsonwebtoken";
-
-import { createLocalUser, findByEmail, findByUsername, findByUserId } from "../models/User.js";
-import { createSession, invalidateAllUserSessions, findBySessionId } from "../models/SessionStore.js";
-import { fetchDataByUserId } from "../models/Data.js";
+import { findByEmail, findByUserId } from "../models/User.js";
+import { authenticate } from "../middleware/auth.middleware.js";
+import { validateEscrowInput, validateDisputeInput, validatePagination, sanitizeString } from "../utils/validator.js";
 import { allocateDepositAddress as allocateBtcAddress } from "../services/wallet/btc.service.js";
 import { allocateDepositAddress as allocateLtcAddress } from "../services/wallet/ltc.service.js";
 import {
@@ -35,33 +32,16 @@ import {
   deleteEscrow,
   getUserEscrowStats,
 } from "../models/Escrow.js";
-import { Query } from "mongoose";
 
 const router = express.Router();
+
+// All escrow routes require authentication
+router.use(authenticate);
 
 /* ===================== CREATE ESCROW ===================== */
 router.post("/create", async (req, res) => {
   try {
-    // Verify JWT from cookie
-    const token = req.cookies.accessToken;
-    if (!token) {
-      return res.status(401).json({ logout: true, message: "No token provided" });
-    }
-
-    let decoded;
-    try {
-      decoded = jwt.verify(token, process.env.JWT_SECRET);
-    } catch (error) {
-      return res.status(401).json({ logout: true, message: "Invalid token" });
-    }
-
-    const { sessionId, userId } = decoded;
-
-    // Verify session
-    const session = await findBySessionId(sessionId);
-    if (!session || !session.valid || session.expiresAt < new Date()) {
-      return res.status(401).json({ logout: true, message: "Session expired" });
-    }
+    const userId = req.user.userId;
 
     // Get buyer (current user)
     const buyer = await findByUserId(userId);
@@ -92,17 +72,10 @@ router.post("/create", async (req, res) => {
     // Pick the correct amount based on currency
     const amount = rawCurrency === "btc" ? amount_btc : (amount_ltc || amount_btc);
 
-    // Validation
-    if (!seller_email || !amount || !item_description || !item_type) {
-      return res.status(400).json({ message: "Missing required fields" });
-    }
-
-    if (!["digital", "physical"].includes(item_type)) {
-      return res.status(400).json({ message: "Invalid item type" });
-    }
-
-    if (amount <= 0) {
-      return res.status(400).json({ message: "Amount must be greater than 0" });
+    // Validate input
+    const inputCheck = validateEscrowInput({ amount, item_description, item_type, seller_email });
+    if (!inputCheck.valid) {
+      return res.status(400).json({ message: inputCheck.errors[0], errors: inputCheck.errors });
     }
 
     // Find seller by email
@@ -138,7 +111,7 @@ router.post("/create", async (req, res) => {
       buyerEmail: buyer.email,
       sellerId: seller.userId,
       sellerEmail: seller_email,
-      itemDescription: item_description,
+      itemDescription: sanitizeString(item_description),
       itemType: item_type,
       protection: protection_terms || "Standard protection",
       autoReleaseHours,
@@ -169,26 +142,7 @@ router.post("/create", async (req, res) => {
 /* ===================== GET ALL ESCROWS FOR USER ===================== */
 router.get("/", async (req, res) => {
   try {
-    // Verify JWT from cookie
-    const token = req.cookies.accessToken;
-    if (!token) {
-      return res.status(401).json({ logout: true, message: "No token provided" });
-    }
-
-    let decoded;
-    try {
-      decoded = jwt.verify(token, process.env.JWT_SECRET);
-    } catch (error) {
-      return res.status(401).json({ logout: true, message: "Invalid token" });
-    }
-
-    const { sessionId, userId } = decoded;
-
-    // Verify session
-    const session = await findBySessionId(sessionId);
-    if (!session || !session.valid || session.expiresAt < new Date()) {
-      return res.status(401).json({ logout: true, message: "Session expired" });
-    }
+    const userId = req.user.userId;
 
     // Get escrows where user is buyer
     const buyerEscrows = await findByBuyerId(userId);
@@ -232,26 +186,7 @@ router.get("/", async (req, res) => {
 /* ===================== GET ESCROW DETAIL ===================== */
 router.post("/detail/:id", async (req, res) => {
   try {
-    // Verify JWT from cookie
-    const token = req.cookies.accessToken;
-    if (!token) {
-      return res.status(401).json({ logout: true, message: "No token provided" });
-    }
-
-    let decoded;
-    try {
-      decoded = jwt.verify(token, process.env.JWT_SECRET);
-    } catch (error) {
-      return res.status(401).json({ logout: true, message: "Invalid token" });
-    }
-
-    const { sessionId, userId } = decoded;
-
-    // Verify session
-    const session = await findBySessionId(sessionId);
-    if (!session || !session.valid || session.expiresAt < new Date()) {
-      return res.status(401).json({ logout: true, message: "Session expired" });
-    }
+    const userId = req.user.userId;
 
     // Get escrow ID from URL params
     const escrowId = req.params.id;
@@ -338,38 +273,11 @@ router.post("/detail/:id", async (req, res) => {
 });
 
 /* ===================== DISPUTE ROUTES ===================== */
-const VALID_DISPUTE_REASONS = [
-  "Item not received",
-  "Item damaged or different",
-  "Fraud or scam",
-  "Poor quality",
-  "Communication issue",
-  "Other",
-];
 
 /* ===================== GET /api/escrow/disputes ===================== */
 router.get("/disputes", async (req, res) => {
   try {
-    // Verify JWT from cookie
-    const token = req.cookies.accessToken;
-    if (!token) {
-      return res.status(401).json({ logout: true, message: "No token provided" });
-    }
-
-    let decoded;
-    try {
-      decoded = jwt.verify(token, process.env.JWT_SECRET);
-    } catch (error) {
-      return res.status(401).json({ logout: true, message: "Invalid token" });
-    }
-
-    const { sessionId, userId } = decoded;
-
-    // Verify session
-    const session = await findBySessionId(sessionId);
-    if (!session || !session.valid || session.expiresAt < new Date()) {
-      return res.status(401).json({ logout: true, message: "Session expired" });
-    }
+    const userId = req.user.userId;
 
     // Collect all escrow IDs where user is buyer or seller
     const buyerEscrows = await findByBuyerId(userId);
@@ -381,8 +289,9 @@ router.get("/disputes", async (req, res) => {
       return res.status(200).json([]);
     }
 
-    // Fetch disputed escrows with optional filters
-    const { status, limit, offset } = req.query;
+    // Fetch disputed escrows with optional filters and capped pagination
+    const { status } = req.query;
+    const { limit, offset } = validatePagination(req.query);
     const disputedEscrows = await findDisputedEscrows(escrowIds, { status, limit, offset });
 
     // Resolve usernames for buyer / seller
@@ -431,39 +340,13 @@ router.get("/disputes", async (req, res) => {
 /* ===================== POST /api/escrow/disputes ===================== */
 router.post("/disputes", async (req, res) => {
   try {
-    // Verify JWT from cookie
-    const token = req.cookies.accessToken;
-    if (!token) {
-      return res.status(401).json({ logout: true, message: "No token provided" });
-    }
-
-    let decoded;
-    try {
-      decoded = jwt.verify(token, process.env.JWT_SECRET);
-    } catch (error) {
-      return res.status(401).json({ logout: true, message: "Invalid token" });
-    }
-
-    const { sessionId, userId } = decoded;
-
-    // Verify session
-    const session = await findBySessionId(sessionId);
-    if (!session || !session.valid || session.expiresAt < new Date()) {
-      return res.status(401).json({ logout: true, message: "Session expired" });
-    }
-
+    const userId = req.user.userId;
     const { escrowId, reason, evidence } = req.body;
 
-    // Validate required fields
-    if (!escrowId || !reason || !evidence) {
-      return res.status(400).json({ message: "Missing required fields: escrowId, reason, evidence" });
-    }
-
-    // Validate reason
-    if (!VALID_DISPUTE_REASONS.includes(reason)) {
-      return res.status(400).json({
-        message: `Invalid reason. Must be one of: ${VALID_DISPUTE_REASONS.join(", ")}`,
-      });
+    // Validate dispute input
+    const disputeCheck = validateDisputeInput({ escrowId, reason, evidence });
+    if (!disputeCheck.valid) {
+      return res.status(400).json({ message: disputeCheck.errors[0], errors: disputeCheck.errors });
     }
 
     // Find the escrow

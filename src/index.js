@@ -5,6 +5,7 @@ import app from "./app.js";
 import { connectDB } from "./config/db.js";
 import { startDepositWatcher } from "./services/depositWatcher.service.js";
 import { setupChatSocket } from "./services/chat.socket.js";
+import { setupAdminLiveFeedWs } from "./services/adminLiveFeed.service.js";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -62,6 +63,9 @@ async function startServer() {
 
   // Setup chat message handling via Socket.IO
   setupChatSocket(io);
+
+  // Setup native WebSocket endpoint for admin live feed
+  setupAdminLiveFeedWs(httpServer);
 
   // Start MongoDB Change Stream watchers for deposit detection
   try {

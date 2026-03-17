@@ -11,38 +11,11 @@
  */
 
 import express from "express";
-import jwt from "jsonwebtoken";
-import { findBySessionId } from "../models/SessionStore.js";
 import { findByEscrowId } from "../models/Escrow.js";
 import { getMessages, markAsRead, countUnread } from "../models/EscrowChat.js";
+import { authenticate } from "../middleware/auth.middleware.js";
 
 const router = express.Router();
-
-/**
- * Middleware: authenticate user and attach userId to req
- */
-async function authenticate(req, res, next) {
-  const token = req.cookies.accessToken;
-  if (!token) {
-    return res.status(401).json({ logout: true, message: "No token provided" });
-  }
-
-  let decoded;
-  try {
-    decoded = jwt.verify(token, process.env.JWT_SECRET);
-  } catch {
-    return res.status(401).json({ logout: true, message: "Invalid token" });
-  }
-
-  const { sessionId, userId } = decoded;
-  const session = await findBySessionId(sessionId);
-  if (!session || !session.valid || session.expiresAt < new Date()) {
-    return res.status(401).json({ logout: true, message: "Session expired" });
-  }
-
-  req.userId = userId;
-  next();
-}
 
 /**
  * Middleware: verify the user is buyer or seller in the escrow
@@ -61,7 +34,7 @@ async function authorizeEscrowParty(req, res, next) {
   const buyerId = escrow.buyer?.userId;
   const sellerId = escrow.seller?.userId;
 
-  if (req.userId !== buyerId && req.userId !== sellerId) {
+  if (req.user.userId !== buyerId && req.user.userId !== sellerId) {
     return res.status(403).json({ message: "You don't have access to this escrow chat" });
   }
 
@@ -92,14 +65,14 @@ router.get("/:escrowId/messages", authorizeEscrowParty, async (req, res) => {
 router.post("/:escrowId/read", authorizeEscrowParty, async (req, res) => {
   try {
     const { escrowId } = req.params;
-    await markAsRead(escrowId, req.userId);
+    await markAsRead(escrowId, req.user.userId);
 
     // Notify the other party that messages were read
     const io = req.app.get("io");
     if (io) {
       io.to(`chat:${escrowId}`).emit("chat:read", {
         escrowId,
-        readBy: req.userId,
+        readBy: req.user.userId,
       });
     }
 
@@ -114,7 +87,7 @@ router.post("/:escrowId/read", authorizeEscrowParty, async (req, res) => {
 router.get("/:escrowId/unread", authorizeEscrowParty, async (req, res) => {
   try {
     const { escrowId } = req.params;
-    const count = await countUnread(escrowId, req.userId);
+    const count = await countUnread(escrowId, req.user.userId);
 
     res.status(200).json({ unread: count });
   } catch (error) {

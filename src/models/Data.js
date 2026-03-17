@@ -75,12 +75,31 @@ export async function createData({ userId }) {
 
   return result.value;
 }
-export async function updateUserProfile({ userId, updates }) {
+const ALLOWED_PROFILE_UPDATES = new Set([
+  "preferences",
+]);
+
+export async function updateUserProfile({ userId, updates, isInternal = false }) {
   const db = getDB();
 
   if (!userId) throw new Error("userId is required");
   if (!updates || typeof updates !== "object") {
     throw new Error("updates must be an object");
+  }
+
+  // Unless called internally, only allow whitelisted fields
+  if (!isInternal) {
+    const filtered = {};
+    for (const key of Object.keys(updates)) {
+      if (ALLOWED_PROFILE_UPDATES.has(key)) {
+        filtered[key] = updates[key];
+      }
+    }
+    updates = filtered;
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return true; // nothing to update
   }
 
   const result = await db.collection(COLLECTION).updateOne(

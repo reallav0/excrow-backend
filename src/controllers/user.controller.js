@@ -1,36 +1,14 @@
 import express from "express";
-import bcrypt from "bcrypt";
-import jwt from "jsonwebtoken";
+import { findByUserId } from "../models/User.js";
+import { fetchDataByUserId } from "../models/Data.js";
+import { authenticate } from "../middleware/auth.middleware.js";
 
-import { createLocalUser, findByEmail, findByUsername, findByUserId } from "../models/User.js";
-import { createSession, invalidateAllUserSessions, findBySessionId } from "../models/SessionStore.js";
-import { fetchDataByUserId } from "../models/Data.js"
 const router = express.Router();
 
-/* ------------------ GET USER ------------------ */
-router.get("/user", async (req, res) => {
+/* ------------------ GET USER (authenticated) ------------------ */
+router.get("/user", authenticate, async (req, res) => {
   try {
-    // Get token from cookie
-    const token = req.cookies.accessToken;
-    if (!token) {
-      return res.status(401).json({ logout: true, message: "No token provided" });
-    }
-
-    // Verify JWT
-    let decoded;
-    try {
-      decoded = jwt.verify(token, process.env.JWT_SECRET);
-    } catch (error) {
-      return res.status(401).json({ logout: true, message: "Invalid token" });
-    }
-
-    const { sessionId, userId } = decoded;
-
-    // Check if session is valid
-    const session = await findBySessionId(sessionId);
-    if (!session || !session.valid || session.expiresAt < new Date()) {
-      return res.status(401).json({ logout: true, message: "Session expired" });
-    }
+    const userId = req.user.userId;
 
     // Get user data
     const user = await findByUserId(userId);
@@ -42,7 +20,7 @@ router.get("/user", async (req, res) => {
       return res.status(404).json({ logout: true, message: "Data not found" });
     }
 
-    // Return user data (exclude sensitive info)
+    // Return user data (exclude sensitive info like passwordHash)
     res.json({
       userId: user.userId,
       username: user.username,
@@ -65,6 +43,7 @@ router.get("/user", async (req, res) => {
   }
 });
 
+/* ------------------ GET PUBLIC PROFILE ------------------ */
 router.get("/profile/:id", async (req, res) => {
   try {
     const { id } = req.params;
