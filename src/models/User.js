@@ -45,7 +45,6 @@ export async function createLocalUser({ username, email, password, birthdate }) 
     providers: {
       google: null,
       discord: null,
-      facebook: null,
     },
 
     token: null,
@@ -94,7 +93,6 @@ export async function createOrUpdateOAuthUser(provider, data) {
       providers: {
         google: null,
         discord: null,
-        facebook: null,
       },
 
       token: null,

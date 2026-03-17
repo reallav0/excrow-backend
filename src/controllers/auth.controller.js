@@ -4,7 +4,6 @@ import jwt from "jsonwebtoken";
 import { randomUUID } from "crypto";
 import passport from "passport";
 import { Strategy as GoogleStrategy } from "passport-google-oauth20";
-import { Strategy as FacebookStrategy } from "passport-facebook";
 import axios from "axios";
 import querystring from "querystring";
 
@@ -344,55 +343,6 @@ router.get(
   }
 );
 
-/* ======================================================
-   FACEBOOK OAUTH
-====================================================== */
-/*
-passport.use(
-  new FacebookStrategy(
-    {
-      clientID: process.env.FACEBOOK_CLIENT_ID,
-      clientSecret: process.env.FACEBOOK_CLIENT_SECRET,
-      callbackURL: "http://localhost:3001/api/auth/facebook/callback",
-      profileFields: ["id", "emails", "displayName"],
-    },
-    async (_, __, profile, done) => done(null, profile)
-  )
-);
-
-router.get("/facebook", (req, res, next) => {
-  const state = generateState(res);
-  passport.authenticate("facebook", {
-    scope: ["email"],
-    state,
-  })(req, res, next);
-});
-
-router.get(
-  "/facebook/callback",
-  passport.authenticate("facebook", {
-    session: false,
-    failureRedirect: "/",
-  }),
-  async (req, res) => {
-    if (!validateState(req)) {
-      return res.status(403).json({ message: "Invalid OAuth state" });
-    }
-
-    const email = req.user.emails?.[0]?.value || null;
-
-    await handleSocialLogin({
-      provider: "facebook",
-      providerId: req.user.id,
-      username: req.user.displayName,
-      email,
-      avatar: `https://graph.facebook.com/${req.user.id}/picture?type=large`,
-      req,
-      res,
-    });
-  }
-);
-*/
 /* ======================================================
    DISCORD OAUTH
 ====================================================== */
