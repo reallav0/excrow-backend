@@ -8,7 +8,7 @@ const uri = process.env.MONGO_URI;
 const dbName = "number0";
 
 if (!uri) {
-  console.error("❌ MONGO_URI is missing in .env");
+  console.error("❌ MONGO_URI is missing in environment configuration");
   process.exit(1);
 }
 

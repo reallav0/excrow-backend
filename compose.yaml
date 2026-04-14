@@ -4,7 +4,10 @@ services:
     build:
       context: .
       dockerfile: ./Dockerfile
+    env_file:
+      - .env
     environment:
       NODE_ENV: production
+      PORT: ${PORT:-3001}
     ports:
       - 3001:3001

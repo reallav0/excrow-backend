@@ -11,7 +11,7 @@ import { setupChatSocket } from "./services/chat.socket.js";
 import { setupAdminLiveFeedWs } from "./services/adminLiveFeed.service.js";
 import dotenv from "dotenv";
 
-dotenv.config({ path: "../.env" });
+dotenv.config();
 
 const PORT = Number(process.env.PORT) || 3001;
 const ROOM_ID_MAX_LENGTH = 200;
