@@ -3,6 +3,8 @@ import { ObjectId } from "mongodb";
 import crypto from "crypto";
 
 const COLLECTION = "escrows";
+const ESCROW_ID_PREFIX = "ESC-";
+const ESCROW_ID_LENGTH = 32;
 
 /**
  * Generate a unique public escrow ID based on multiple entropy sources
@@ -18,11 +20,11 @@ function generateEscrowId(amount, buyerEmail, sellerEmail) {
   // Generate SHA256 hash
   const hash = crypto.createHash('sha256').update(hashInput).digest('hex');
   
-  // Extract 6 characters for the ID (base36 format for readability)
+  // Extract 32 characters for the ID (base36 format for readability)
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-  let result = "ESC-";
+  let result = ESCROW_ID_PREFIX;
   
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < ESCROW_ID_LENGTH; i++) {
     const charCode = parseInt(hash.substring(i * 2, i * 2 + 2), 16);
     result += chars[charCode % chars.length];
   }

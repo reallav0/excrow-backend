@@ -20,7 +20,7 @@
  */
 
 import * as ecc from "tiny-secp256k1";
-import bip39 from "bip39";
+import crypto from "crypto";
 import { BIP32Factory } from "bip32";
 import * as bitcoin from "bitcoinjs-lib";
 import { getDB } from "../../config/db.js";
@@ -30,16 +30,104 @@ import { ltcRpc } from "../rpc.service.js";
 const bip32 = BIP32Factory(ecc);
 
 const ADDRESSES_COLL = "addresses_ltc";
-const ESCROWS_COLL = "escrows";
+const BROADCAST_COLL = "broadcast_ltc";
 
 /* ─── constants ─── */
 const DUST_LIMIT = 546;
-const LTC_ACCOUNT_PATH = "m/84'/2'/0'";
 
 /* ─── helpers ─── */
 
 function toSats(ltc) {
   return Math.round(ltc * 1e8);
+}
+
+function decryptXprvPayload(payload, fallbackSalt) {
+  const passphrase = process.env.XPRIV_ENCRYPTION_KEY;
+  if (!passphrase) {
+    throw new Error("XPRIV_ENCRYPTION_KEY not set");
+  }
+
+  const salt = payload?.salt || fallbackSalt || process.env.XPRIV_ENCRYPTION_SALT;
+  if (!salt) {
+    throw new Error("XPRIV_ENCRYPTION_SALT not set");
+  }
+
+  const iv = Buffer.from(payload.iv, "base64");
+  const authTag = Buffer.from(payload.authTag, "base64");
+  const ciphertext = Buffer.from(payload.ciphertext, "base64");
+  const key = crypto.scryptSync(passphrase, salt, 32);
+
+  const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv);
+  decipher.setAuthTag(authTag);
+
+  return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");
+}
+
+function extractXprvFromBroadcastDoc(doc) {
+  if (!doc) {
+    throw new Error("No broadcast LTC signing record found");
+  }
+
+  if (typeof doc.xprv === "string" && doc.xprv.length > 0) {
+    return doc.xprv;
+  }
+
+  if (typeof doc.xpriv === "string" && doc.xpriv.length > 0) {
+    return doc.xpriv;
+  }
+
+  const payloadCandidates = [doc.xprvEncrypted, doc.encryptedXprv, doc.xprv, doc.xpriv, doc];
+  const encrypted = payloadCandidates.find(
+    (v) => v && typeof v === "object" && v.iv && v.authTag && v.ciphertext
+  );
+
+  if (!encrypted) {
+    throw new Error("broadcast_ltc record missing xprv/xpriv payload");
+  }
+
+  const algo = (encrypted.algorithm || "aes-256-gcm").toLowerCase();
+  if (algo !== "aes-256-gcm") {
+    throw new Error(`Unsupported xprv encryption algorithm: ${encrypted.algorithm}`);
+  }
+
+  return decryptXprvPayload(encrypted, doc.salt);
+}
+
+async function getSigningNode(db, index, derivationPath) {
+  const doc = await db.collection(BROADCAST_COLL).findOne(
+    {
+      $or: [
+        { active: true },
+        { xprv: { $exists: true } },
+        { xpriv: { $exists: true } },
+        { xprvEncrypted: { $exists: true } },
+        { encryptedXprv: { $exists: true } },
+        { algorithm: { $exists: true }, iv: { $exists: true }, authTag: { $exists: true }, ciphertext: { $exists: true } },
+      ],
+    },
+    {
+      sort: { active: -1, updatedAt: -1, createdAt: -1 },
+    }
+  );
+
+  const accountXprv = extractXprvFromBroadcastDoc(doc);
+  const accountNode = bip32.fromBase58(accountXprv, NETWORK);
+
+  if (Number.isInteger(index)) {
+    return accountNode.derive(0).derive(index);
+  }
+
+  const pathMatch = typeof derivationPath === "string"
+    ? derivationPath.match(/\/(\d+)\/(\d+)$/)
+    : null;
+
+  if (pathMatch) {
+    const change = Number(pathMatch[1]);
+    const idx = Number(pathMatch[2]);
+    return accountNode.derive(change).derive(idx);
+  }
+
+  throw new Error("Could not determine child derivation index for signing key");
 }
 
 /**
@@ -173,16 +261,8 @@ export async function sendLtcTransaction({ escrowId, toAddress }) {
       );
     }
 
-    /* ── 6. derive signing key ── */
-    const mnemonic = process.env.LTC_MNEMONIC;
-    if (!mnemonic) throw new Error("LTC_MNEMONIC not set");
-
-    const seed = bip39.mnemonicToSeedSync(mnemonic);
-    const root = bip32.fromSeed(seed, NETWORK);
-
-    // Use derivationPath from doc if available, otherwise construct from index
-    const derivationPath = addressDoc.derivationPath || `${LTC_ACCOUNT_PATH}/0/${index}`;
-    const child = root.derivePath(derivationPath);
+    /* ── 6. derive signing key from stored xprv ── */
+    const child = await getSigningNode(db, index, addressDoc.derivationPath);
 
     /* ── 7. build PSBT ── */
     const psbt = new bitcoin.Psbt({ network: NETWORK });

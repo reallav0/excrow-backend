@@ -50,7 +50,7 @@ export async function initMasterWallet() {
   };
 
   await db.collection(WALLETS_COLL).insertOne(wallet);
-  console.log("✅ Bitcoin master wallet initialized");
+  console.log("Bitcoin master wallet initialized");
 
   return wallet;
 }

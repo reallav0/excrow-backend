@@ -56,7 +56,7 @@ export async function initMasterWallet() {
   };
 
   await db.collection(WALLETS_COLL).insertOne(wallet);
-  console.log("✅ Litecoin master wallet initialized");
+  console.log("Litecoin master wallet initialized");
 
   return wallet;
 }

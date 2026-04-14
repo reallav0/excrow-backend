@@ -98,8 +98,8 @@ router.post("/create", async (req, res) => {
     let depositAddress;
     try {
       const addressResult = rawCurrency === "btc"
-        ? await allocateBtcAddress({ id: `escrow_temp_${Date.now()}` })
-        : await allocateLtcAddress({ id: `escrow_temp_${Date.now()}` });
+        ? await allocateBtcAddress({ id: `escrow_${Date.now()}` })
+        : await allocateLtcAddress({ id: `escrow_${Date.now()}` });
       depositAddress = addressResult.address;
     } catch (error) {
       console.error("Address allocation error:", error);
