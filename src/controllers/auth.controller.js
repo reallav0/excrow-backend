@@ -79,6 +79,15 @@ const ACCESS_TOKEN_EXPIRY = "15m";
 const ACCESS_COOKIE_MAX_AGE = 15 * 60 * 1000; // 15 min
 const REFRESH_COOKIE_MAX_AGE = 7 * 24 * 60 * 60 * 1000; // 7 days
 const SESSION_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000;
+const GOOGLE_CALLBACK_URL =
+  process.env.GOOGLE_CALLBACK_URL || "http://localhost:3001/api/auth/google/callback";
+const DISCORD_REDIRECT =
+  process.env.DISCORD_REDIRECT || "http://localhost:3001/api/auth/discord/callback";
+
+const hasGoogleOAuthConfig =
+  Boolean(process.env.GOOGLE_CLIENT_ID) && Boolean(process.env.GOOGLE_CLIENT_SECRET);
+const hasDiscordOAuthConfig =
+  Boolean(process.env.DISCORD_CLIENT_ID) && Boolean(process.env.DISCORD_CLIENT_SECRET);
 
 function setAuthCookies(res, accessToken, refreshToken) {
   res.cookie("accessToken", accessToken, {
@@ -103,10 +112,22 @@ function clearAuthCookies(res) {
 
 // Function to verify reCAPTCHA
 async function verifyRecaptcha(captchaToken) {
+  const isProd = process.env.NODE_ENV === "production";
+  const secret = process.env.RECAPTCHA_SECRET_KEY;
+
+  // In non-production, allow local development without CAPTCHA wiring.
+  if (!isProd && (!secret || !captchaToken)) {
+    return true;
+  }
+
+  if (!secret || !captchaToken) {
+    return false;
+  }
+
   try {
     const response = await axios.post('https://www.google.com/recaptcha/api/siteverify', null, {
       params: {
-        secret: process.env.RECAPTCHA_SECRET_KEY,
+        secret,
         response: captchaToken,
       },
     });
@@ -167,8 +188,8 @@ router.post("/register", async (req, res) => {
     });
 
     // Create session with refresh token
-    const sessionId = crypto.randomUUID();
-    const refreshToken = crypto.randomUUID();
+    const sessionId = randomUUID();
+    const refreshToken = randomUUID();
     const expiresAt = new Date(Date.now() + SESSION_EXPIRY_MS);
 
     await createSession({
@@ -244,8 +265,8 @@ router.post("/login", async (req, res) => {
     await invalidateAllUserSessions(user.userId);
 
     // Create new session with refresh token
-    const sessionId = crypto.randomUUID();
-    const refreshToken = crypto.randomUUID();
+    const sessionId = randomUUID();
+    const refreshToken = randomUUID();
     const expiresAt = new Date(Date.now() + SESSION_EXPIRY_MS);
 
     await createSession({
@@ -296,18 +317,34 @@ function validateState(req) {
 /* ======================================================
    GOOGLE OAUTH
 ====================================================== */
-passport.use(
-  new GoogleStrategy(
-    {
-      clientID: process.env.GOOGLE_CLIENT_ID,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-      callbackURL: "http://localhost:3001/api/auth/google/callback",
-    },
-    async (_, __, profile, done) => done(null, profile)
-  )
-);
+if (hasGoogleOAuthConfig) {
+  passport.use(
+    new GoogleStrategy(
+      {
+        clientID: process.env.GOOGLE_CLIENT_ID,
+        clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+        callbackURL: GOOGLE_CALLBACK_URL,
+      },
+      async (_, __, profile, done) => done(null, profile)
+    )
+  );
+}
 
-router.get("/google", (req, res, next) => {
+function requireGoogleOAuthConfig(req, res, next) {
+  if (!hasGoogleOAuthConfig) {
+    return res.status(503).json({ message: "Google OAuth is not configured" });
+  }
+  return next();
+}
+
+function requireDiscordOAuthConfig(req, res, next) {
+  if (!hasDiscordOAuthConfig) {
+    return res.status(503).json({ message: "Discord OAuth is not configured" });
+  }
+  return next();
+}
+
+router.get("/google", requireGoogleOAuthConfig, (req, res, next) => {
   const state = generateState(res);
   passport.authenticate("google", {
     scope: ["profile", "email"],
@@ -317,6 +354,7 @@ router.get("/google", (req, res, next) => {
 
 router.get(
   "/google/callback",
+  requireGoogleOAuthConfig,
   passport.authenticate("google", {
     session: false,
     failureRedirect: "/",
@@ -325,6 +363,7 @@ router.get(
     if (!validateState(req)) {
       return res.status(403).json({ message: "Invalid OAuth state" });
     }
+    res.clearCookie("oauth_state");
 
     const emailObj = req.user.emails?.[0];
     if (!emailObj || emailObj.verified !== true) {
@@ -346,7 +385,7 @@ router.get(
 /* ======================================================
    DISCORD OAUTH
 ====================================================== */
-router.get("/discord", (req, res) => {
+router.get("/discord", requireDiscordOAuthConfig, (req, res) => {
   const state = generateState(res);
 
   const params = new URLSearchParams({
@@ -361,10 +400,8 @@ router.get("/discord", (req, res) => {
     `https://discord.com/oauth2/authorize?${params.toString()}`
   );
 });
-const DISCORD_REDIRECT =
-  "http://localhost:3001/api/auth/discord/callback";
 
-router.get("/discord/callback", async (req, res) => {
+router.get("/discord/callback", requireDiscordOAuthConfig, async (req, res) => {
   if (
     typeof req.query.state !== "string" ||
     req.query.state !== req.cookies.oauth_state
@@ -420,6 +457,10 @@ router.get("/discord/callback", async (req, res) => {
         .json({ message: "Invalid Discord user data" });
     }
 
+    if (!email) {
+      return res.status(403).json({ message: "Discord account email is required" });
+    }
+
     await handleSocialLogin({
       provider: "discord",
       providerId: id,
@@ -456,7 +497,7 @@ router.post("/refresh", async (req, res) => {
     }
 
     // Rotate refresh token (prevents reuse / replay)
-    const newRefreshToken = crypto.randomUUID();
+    const newRefreshToken = randomUUID();
     await rotateRefreshToken(session.sessionId, newRefreshToken);
 
     // Issue new short-lived access token

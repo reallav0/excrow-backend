@@ -1,4 +1,5 @@
 import { logger } from "../utils/logger.js";
+import jwt from "jsonwebtoken";
 
 /**
  * Production-grade Rate Limiting Middleware
@@ -16,22 +17,14 @@ class RateLimiter {
    * Generate identifier based on IP and User Agent
    */
   getIdentifier(req) {
-    const ip = this.getClientIP(req);
-    const userAgent = req.headers["user-agent"] || "unknown";
-    return `${ip}:${userAgent}`;
+    return this.getClientIP(req);
   }
 
   /**
    * Get client IP from various sources
    */
   getClientIP(req) {
-    return (
-      req.headers["x-forwarded-for"]?.split(",")[0] ||
-      req.headers["x-real-ip"] ||
-      req.connection.remoteAddress ||
-      req.socket.remoteAddress ||
-      "unknown"
-    );
+    return req.ip || req.socket?.remoteAddress || "unknown";
   }
 
   /**
@@ -108,7 +101,31 @@ class RateLimiter {
 const limiter = new RateLimiter();
 
 // Cleanup expired entries every 10 minutes
-setInterval(() => limiter.cleanup(), 10 * 60 * 1000);
+const cleanupInterval = setInterval(() => limiter.cleanup(), 10 * 60 * 1000);
+cleanupInterval.unref?.();
+
+function extractVerifiedUserId(req) {
+  const tokenFromHeader = req.headers.authorization?.startsWith("Bearer ")
+    ? req.headers.authorization.substring(7).trim()
+    : null;
+  const tokenFromCookie = req.cookies?.accessToken || null;
+  const token = tokenFromHeader || tokenFromCookie;
+
+  if (!token || !process.env.JWT_SECRET) {
+    return null;
+  }
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    if (decoded?.userId !== undefined && decoded?.userId !== null) {
+      return String(decoded.userId);
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
 
 /**
  * Rate Limit Configuration for different endpoint types
@@ -143,22 +160,7 @@ export const createRateLimitMiddleware = (configKey = "api") => {
   const config = rateLimitConfigs[configKey] || rateLimitConfigs.api;
 
   return (req, res, next) => {
-    // Get authenticated user ID if available
-    let userId = null;
-    try {
-      const tokenFromHeader = req.headers.authorization?.startsWith("Bearer ")
-        ? req.headers.authorization.substring(7)
-        : null;
-      const tokenFromCookie = req.cookies?.accessToken || req.cookies?.sessionToken || null;
-      const token = tokenFromHeader || tokenFromCookie;
-
-      if (token) {
-        const decoded = JSON.parse(Buffer.from(token.split(".")[1], "base64").toString());
-        userId = decoded.userId;
-      }
-    } catch (error) {
-      // Token parsing failed, fall back to IP-based limiting
-    }
+    const userId = extractVerifiedUserId(req);
 
     let rateLimitResult;
     let identifier;

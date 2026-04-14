@@ -7,7 +7,19 @@ const adminSessions = new Map();
 
 const ACCESS_TOKEN_EXPIRY = process.env.ADMIN_TOKEN_EXPIRY || "8h";
 const ADMIN_SESSION_MAX_AGE = 8 * 60 * 60 * 1000;
+const ADMIN_SESSION_CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
 export const ADMIN_SESSION_COOKIE_NAME = process.env.ADMIN_SESSION_COOKIE_NAME || "sessionToken";
+
+const adminSessionCleanupTimer = setInterval(() => {
+  const now = Date.now();
+
+  for (const [sessionId, session] of adminSessions.entries()) {
+    if (!session || !session.valid || session.expiresAt.getTime() <= now) {
+      adminSessions.delete(sessionId);
+    }
+  }
+}, ADMIN_SESSION_CLEANUP_INTERVAL_MS);
+adminSessionCleanupTimer.unref?.();
 
 function getAdminJwtSecret() {
   return process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET;
@@ -71,6 +83,10 @@ export async function createAdminSession({ email, password, ip }) {
   });
 
   const secret = getAdminJwtSecret();
+  if (!secret) {
+    throw new Error("Admin auth secret is not configured");
+  }
+
   const token = jwt.sign(
     {
       sid: sessionId,
@@ -154,6 +170,10 @@ export function authenticateAdminToken(token) {
     return { ok: false, status: 401, message: "Invalid or expired admin token" };
   }
 
+  if (typeof decoded?.sid !== "string" || typeof decoded?.jti !== "string") {
+    return { ok: false, status: 401, message: "Invalid admin token payload" };
+  }
+
   const session = adminSessions.get(decoded.sid);
   if (!isSessionActive(session)) {
     return { ok: false, status: 403, message: "Admin session expired or revoked" };
@@ -203,5 +223,10 @@ export function setAdminSessionCookie(res, token) {
 }
 
 export function clearAdminSessionCookie(res) {
-  res.clearCookie(ADMIN_SESSION_COOKIE_NAME, { path: "/" });
+  res.clearCookie(ADMIN_SESSION_COOKIE_NAME, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "Lax",
+    path: "/",
+  });
 }

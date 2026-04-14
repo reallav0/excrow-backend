@@ -1,6 +1,95 @@
 import { getDB } from "../config/db.js";
 
 const COLLECTION = "userprofiles";
+const PROFILE_VISIBILITY_OPTIONS = new Set(["public", "private", "friends_only"]);
+
+const DEFAULT_USER_SETTINGS = {
+  notifications: {
+    emailNotifications: true,
+    pushNotifications: true,
+    marketingEmails: false,
+    escrowUpdates: true,
+  },
+  privacy: {
+    profileVisibility: "public",
+    showEmail: false,
+    allowMessages: true,
+  },
+  security: {
+    twoFactorAuth: false,
+  },
+};
+
+function deepClone(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function boolOrDefault(value, fallback) {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+export function getDefaultUserSettings() {
+  return deepClone(DEFAULT_USER_SETTINGS);
+}
+
+export function normalizeUserSettings(input = {}) {
+  const defaults = getDefaultUserSettings();
+  const candidate = input && typeof input === "object" ? input : {};
+
+  const incomingNotifications =
+    candidate.notifications && typeof candidate.notifications === "object"
+      ? candidate.notifications
+      : {};
+  const incomingPrivacy =
+    candidate.privacy && typeof candidate.privacy === "object"
+      ? candidate.privacy
+      : {};
+  const incomingSecurity =
+    candidate.security && typeof candidate.security === "object"
+      ? candidate.security
+      : {};
+
+  const visibility =
+    typeof incomingPrivacy.profileVisibility === "string" &&
+    PROFILE_VISIBILITY_OPTIONS.has(incomingPrivacy.profileVisibility)
+      ? incomingPrivacy.profileVisibility
+      : defaults.privacy.profileVisibility;
+
+  return {
+    notifications: {
+      emailNotifications: boolOrDefault(
+        incomingNotifications.emailNotifications,
+        defaults.notifications.emailNotifications
+      ),
+      pushNotifications: boolOrDefault(
+        incomingNotifications.pushNotifications,
+        defaults.notifications.pushNotifications
+      ),
+      marketingEmails: boolOrDefault(
+        incomingNotifications.marketingEmails,
+        defaults.notifications.marketingEmails
+      ),
+      escrowUpdates: boolOrDefault(
+        incomingNotifications.escrowUpdates,
+        defaults.notifications.escrowUpdates
+      ),
+    },
+    privacy: {
+      profileVisibility: visibility,
+      showEmail: boolOrDefault(incomingPrivacy.showEmail, defaults.privacy.showEmail),
+      allowMessages: boolOrDefault(
+        incomingPrivacy.allowMessages,
+        defaults.privacy.allowMessages
+      ),
+    },
+    security: {
+      twoFactorAuth: boolOrDefault(
+        incomingSecurity.twoFactorAuth,
+        defaults.security.twoFactorAuth
+      ),
+    },
+  };
+}
 
 
 export async function createData({ userId }) {
@@ -53,6 +142,8 @@ export async function createData({ userId }) {
       }
     },
 
+    settings: getDefaultUserSettings(),
+
     // ---- Moderation ----
     banned: false,
     banReason: null,
@@ -77,6 +168,7 @@ export async function createData({ userId }) {
 }
 const ALLOWED_PROFILE_UPDATES = new Set([
   "preferences",
+  "settings",
 ]);
 
 export async function updateUserProfile({ userId, updates, isInternal = false }) {

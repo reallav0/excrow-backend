@@ -10,12 +10,16 @@
  *   OUT → "chat:error"    { message }
  */
 
-import jwt from "jsonwebtoken";
-import cookie from "cookie";
 import { findBySessionId } from "../models/SessionStore.js";
 import { findByUserId } from "../models/User.js";
 import { findByEscrowId } from "../models/Escrow.js";
 import { saveMessage } from "../models/EscrowChat.js";
+
+function isEscrowParty(userId, escrow) {
+  const buyerId = escrow?.buyer?.userId;
+  const sellerId = escrow?.seller?.userId;
+  return String(userId) === String(buyerId) || String(userId) === String(sellerId);
+}
 
 /**
  * Attach chat event listeners to the Socket.IO server.
@@ -37,27 +41,11 @@ export function setupChatSocket(io) {
           return socket.emit("chat:error", { message: "Message too long (max 2000 chars)" });
         }
 
-        // Extract token from cookies
-        const cookieHeader = socket.handshake.headers?.cookie;
-        if (!cookieHeader) {
+        const userId = socket.data?.userId;
+        const sessionId = socket.data?.sessionId;
+        if (userId === undefined || userId === null || !sessionId) {
           return socket.emit("chat:error", { message: "Not authenticated" });
         }
-
-        const cookies = cookie.parse(cookieHeader);
-        const token = cookies.accessToken;
-        if (!token) {
-          return socket.emit("chat:error", { message: "Not authenticated" });
-        }
-
-        // Authenticate via JWT
-        let decoded;
-        try {
-          decoded = jwt.verify(token, process.env.JWT_SECRET);
-        } catch {
-          return socket.emit("chat:error", { message: "Invalid token" });
-        }
-
-        const { sessionId, userId } = decoded;
 
         // Verify session
         const session = await findBySessionId(sessionId);
@@ -71,10 +59,7 @@ export function setupChatSocket(io) {
           return socket.emit("chat:error", { message: "Escrow not found" });
         }
 
-        const buyerId = escrow.buyer?.userId;
-        const sellerId = escrow.seller?.userId;
-
-        if (userId !== buyerId && userId !== sellerId) {
+        if (!isEscrowParty(userId, escrow)) {
           return socket.emit("chat:error", { message: "You are not a party in this escrow" });
         }
 
@@ -103,18 +88,34 @@ export function setupChatSocket(io) {
     });
 
     // Typing indicator
-    socket.on("chat:typing", (data) => {
-      const { escrowId, userId } = data || {};
-      if (escrowId && userId) {
-        socket.to(`chat:${escrowId}`).emit("chat:typing", { escrowId, userId });
+    socket.on("chat:typing", async (data) => {
+      const escrowId = typeof data?.escrowId === "string" ? data.escrowId.trim() : "";
+      const userId = socket.data?.userId;
+      if (!escrowId || userId === undefined || userId === null) {
+        return;
       }
+
+      const escrow = await findByEscrowId(escrowId);
+      if (!escrow || !isEscrowParty(userId, escrow)) {
+        return;
+      }
+
+      socket.to(`chat:${escrowId}`).emit("chat:typing", { escrowId, userId });
     });
 
-    socket.on("chat:stopTyping", (data) => {
-      const { escrowId, userId } = data || {};
-      if (escrowId && userId) {
-        socket.to(`chat:${escrowId}`).emit("chat:stopTyping", { escrowId, userId });
+    socket.on("chat:stopTyping", async (data) => {
+      const escrowId = typeof data?.escrowId === "string" ? data.escrowId.trim() : "";
+      const userId = socket.data?.userId;
+      if (!escrowId || userId === undefined || userId === null) {
+        return;
       }
+
+      const escrow = await findByEscrowId(escrowId);
+      if (!escrow || !isEscrowParty(userId, escrow)) {
+        return;
+      }
+
+      socket.to(`chat:${escrowId}`).emit("chat:stopTyping", { escrowId, userId });
     });
   });
 }

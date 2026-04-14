@@ -2,6 +2,18 @@ import jwt from "jsonwebtoken";
 import { findBySessionId } from "../models/SessionStore.js";
 import { findByUserId } from "../models/User.js";
 
+function extractAccessToken(req) {
+  const authHeader = req.headers.authorization;
+  if (typeof authHeader === "string" && authHeader.startsWith("Bearer ")) {
+    const bearerToken = authHeader.substring(7).trim();
+    if (bearerToken) {
+      return bearerToken;
+    }
+  }
+
+  return req.cookies?.accessToken || null;
+}
+
 /**
  * Core authentication middleware.
  *
@@ -11,7 +23,7 @@ import { findByUserId } from "../models/User.js";
  */
 export async function authenticate(req, res, next) {
   try {
-    const token = req.cookies.accessToken;
+    const token = extractAccessToken(req);
 
     if (!token) {
       return res.status(401).json({ logout: true, message: "Not authenticated" });

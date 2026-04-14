@@ -57,7 +57,7 @@ router.get("/:escrowId/messages", authorizeEscrowParty, async (req, res) => {
     res.status(200).json({ messages });
   } catch (error) {
     console.error("Get Chat Messages Error:", error);
-    res.status(500).json({ message: "Error retrieving messages", error: error.message });
+    res.status(500).json({ message: "Error retrieving messages" });
   }
 });
 
@@ -79,7 +79,7 @@ router.post("/:escrowId/read", authorizeEscrowParty, async (req, res) => {
     res.status(200).json({ message: "Messages marked as read" });
   } catch (error) {
     console.error("Mark As Read Error:", error);
-    res.status(500).json({ message: "Error marking messages as read", error: error.message });
+    res.status(500).json({ message: "Error marking messages as read" });
   }
 });
 
@@ -92,7 +92,7 @@ router.get("/:escrowId/unread", authorizeEscrowParty, async (req, res) => {
     res.status(200).json({ unread: count });
   } catch (error) {
     console.error("Unread Count Error:", error);
-    res.status(500).json({ message: "Error counting unread messages", error: error.message });
+    res.status(500).json({ message: "Error counting unread messages" });
   }
 });
 

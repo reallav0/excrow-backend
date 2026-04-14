@@ -103,7 +103,7 @@ router.post("/create", async (req, res) => {
       depositAddress = addressResult.address;
     } catch (error) {
       console.error("Address allocation error:", error);
-      return res.status(500).json({ message: "Failed to allocate deposit address", error: error.message });
+      return res.status(500).json({ message: "Failed to allocate deposit address" });
     }
 
     const escrow = await createEscrow({
@@ -136,7 +136,7 @@ router.post("/create", async (req, res) => {
     });
   } catch (error) {
     console.error("Create Escrow Error:", error);
-    res.status(500).json({ message: "Error creating escrow", error: error.message });
+    res.status(500).json({ message: "Error creating escrow" });
   }
 });
 /* ===================== GET ALL ESCROWS FOR USER ===================== */
@@ -179,7 +179,7 @@ router.get("/", async (req, res) => {
     res.status(200).json({ escrows });
   } catch (error) {
     console.error("Get Escrows Error:", error);
-    res.status(500).json({ message: "Error retrieving escrows", error: error.message });
+    res.status(500).json({ message: "Error retrieving escrows" });
   }
 });
 
@@ -268,7 +268,7 @@ router.post("/detail/:id", async (req, res) => {
     res.status(200).json(data);
   } catch (error) {
     console.error("Get Escrow Detail Error:", error);
-    res.status(500).json({ message: "Error retrieving escrow details", error: error.message });
+    res.status(500).json({ message: "Error retrieving escrow details" });
   }
 });
 
@@ -333,7 +333,7 @@ router.get("/disputes", async (req, res) => {
     res.status(200).json(result);
   } catch (error) {
     console.error("Get Disputes Error:", error);
-    res.status(500).json({ message: "Error retrieving disputes", error: error.message });
+    res.status(500).json({ message: "Error retrieving disputes" });
   }
 });
 
@@ -396,7 +396,7 @@ router.post("/disputes", async (req, res) => {
     });
   } catch (error) {
     console.error("Create Dispute Error:", error);
-    res.status(500).json({ message: "Error creating dispute", error: error.message });
+    res.status(500).json({ message: "Error creating dispute" });
   }
 });
 
