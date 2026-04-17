@@ -27,6 +27,7 @@ import {
   validateEmail,
   validateUsername,
 } from "../utils/validator.js";
+import { getClientIp } from "../utils/clientIp.js";
 
 const router = express.Router();
 
@@ -221,7 +222,7 @@ router.post("/register", async (req, res) => {
       sessionId,
       userId: user.userId,
       refreshToken,
-      ip: req.ip,
+      ip: getClientIp(req),
       userAgent: req.headers["user-agent"],
       expiresAt,
     });
@@ -298,7 +299,7 @@ router.post("/login", async (req, res) => {
       sessionId,
       userId: user.userId,
       refreshToken,
-      ip: req.ip,
+      ip: getClientIp(req),
       userAgent: req.headers["user-agent"],
       expiresAt,
     });
@@ -601,7 +602,7 @@ async function handleSocialLogin({
       sessionId,
       userId: user.userId,
       refreshToken,
-      ip: req.ip,
+      ip: getClientIp(req),
       userAgent: req.headers["user-agent"],
       expiresAt,
     });

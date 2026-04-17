@@ -11,6 +11,7 @@ import {
   setAdminSessionCookie,
 } from "../middleware/adminAuth.middleware.js";
 import { publishAdminLiveFeed, getAdminLiveFeedItems } from "../services/adminLiveFeed.service.js";
+import { getClientIp } from "../utils/clientIp.js";
 
 const router = express.Router();
 
@@ -156,6 +157,7 @@ function asCsv(rows, headers) {
 
 async function auditLog(req, action, target, meta = {}) {
   const db = getDB();
+  const clientIp = getClientIp(req);
   const log = {
     ts: new Date(),
     admin: req.admin?.id || "unknown",
@@ -164,8 +166,8 @@ async function auditLog(req, action, target, meta = {}) {
     actionType: action,
     target,
     targetEntity: target,
-    ip: req.ip || req.headers["x-forwarded-for"] || null,
-    ipAddress: req.ip || req.headers["x-forwarded-for"] || null,
+    ip: clientIp,
+    ipAddress: clientIp,
     meta,
   };
 
@@ -210,7 +212,7 @@ router.post("/auth/login", async (req, res) => {
       });
     }
 
-    const session = await createAdminSession({ email, password, ip: req.ip });
+    const session = await createAdminSession({ email, password, ip: getClientIp(req) });
     if (!session) {
       recordFailedAdminLogin(email);
       return res.status(401).json({ message: "Invalid email or password" });

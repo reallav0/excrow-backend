@@ -1,4 +1,5 @@
 import { logger } from "../utils/logger.js";
+import { getClientIp } from "../utils/clientIp.js";
 
 /**
  * Sensitive fields that should never appear in logs.
@@ -37,7 +38,7 @@ export const apiLogger = (req, res, next) => {
     endpoint: req.path,
     queryParams: Object.keys(req.query).length > 0 ? req.query : null,
     body: req.body && Object.keys(req.body).length > 0 ? sanitizeBody(req.body) : null,
-    ip: req.ip,
+    ip: getClientIp(req),
     userAgent: req.headers["user-agent"],
   };
 

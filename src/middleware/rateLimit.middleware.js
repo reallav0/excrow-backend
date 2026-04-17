@@ -1,5 +1,6 @@
 import { logger } from "../utils/logger.js";
 import jwt from "jsonwebtoken";
+import { getClientIp } from "../utils/clientIp.js";
 
 /**
  * Production-grade Rate Limiting Middleware
@@ -24,7 +25,7 @@ class RateLimiter {
    * Get client IP from various sources
    */
   getClientIP(req) {
-    return req.ip || req.socket?.remoteAddress || "unknown";
+    return getClientIp(req);
   }
 
   /**

@@ -16,6 +16,26 @@ import { authRateLimit, apiRateLimit, userRateLimit, publicRateLimit, statusRate
 import { errorHandler, notFoundHandler } from "./middleware/error.middleware.js";
 
 const app = express();
+
+function resolveTrustProxySetting() {
+	const configured = process.env.TRUST_PROXY?.trim();
+	if (!configured) {
+		// Default to trusting proxy headers for reverse-proxy deployments.
+		return true;
+	}
+
+	if (configured === "true") return true;
+	if (configured === "false") return false;
+
+	if (/^\d+$/.test(configured)) {
+		return Number(configured);
+	}
+
+	return configured;
+}
+
+app.set("trust proxy", resolveTrustProxySetting());
+
 const allowedOrigins = (process.env.FRONTEND_URL || "http://localhost:3000")
 	.split(",")
 	.map((origin) => origin.trim())
