@@ -96,11 +96,11 @@ const GOOGLE_CALLBACK_URL =
 const DISCORD_REDIRECT =
   sanitizeEnvString(process.env.DISCORD_REDIRECT);
 const FRONTEND_ORIGIN =
-  (process.env.FRONTEND_URL)
+  (process.env.FRONTEND_URL || "http://localhost:3000")
     .split(",")
     .map((origin) => origin.trim())
-    .filter(Boolean)[0];
-const OAUTH_SUCCESS_PATH = process.env.OAUTH_SUCCESS_PATH;
+    .filter(Boolean)[0] || "http://localhost:3000";
+const OAUTH_SUCCESS_PATH = sanitizeEnvString(process.env.OAUTH_SUCCESS_PATH) || "/dashboard";
 
 const hasGoogleOAuthConfig =
   Boolean(GOOGLE_CLIENT_ID) && Boolean(GOOGLE_CLIENT_SECRET);
@@ -134,6 +134,24 @@ function buildFrontendRedirect(pathname = "/") {
   } catch {
     return `http://localhost:3000${pathname}`;
   }
+}
+
+function shouldRedirectAfterAuth(req) {
+  const accept = req.headers?.accept;
+  return typeof accept === "string" && accept.includes("text/html");
+}
+
+function respondAuthSuccess(req, res, statusCode, message, username) {
+  const redirectTo = buildFrontendRedirect(OAUTH_SUCCESS_PATH);
+  if (shouldRedirectAfterAuth(req)) {
+    return res.redirect(303, redirectTo);
+  }
+
+  return res.status(statusCode).json({
+    message,
+    username,
+    redirectTo,
+  });
 }
 
 // Function to verify reCAPTCHA
@@ -236,10 +254,7 @@ router.post("/register", async (req, res) => {
 
     setAuthCookies(res, accessToken, refreshToken);
 
-    res.status(201).json({
-      message: "Registration successful",
-      username: user.username,
-    });
+    return respondAuthSuccess(req, res, 201, "Registration successful", user.username);
   } catch (error) {
     console.error("Register Error:", error);
     res.status(500).json({ message: "Error registering user" });
@@ -313,10 +328,7 @@ router.post("/login", async (req, res) => {
 
     setAuthCookies(res, accessToken, refreshToken);
 
-    res.status(200).json({
-      message: "Login successful",
-      username: user.username,
-    });
+    return respondAuthSuccess(req, res, 200, "Login successful", user.username);
   } catch (error) {
     console.error("Login Error:", error);
     res.status(500).json({ message: "Error logging in" });
