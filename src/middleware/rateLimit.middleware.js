@@ -151,6 +151,11 @@ const rateLimitConfigs = {
     windowMs: 60 * 1000, // 1 minute
     limit: 20, // 20 requests per minute
   },
+  // Platform status endpoint - tighter threshold
+  status: {
+    windowMs: 60 * 1000, // 1 minute
+    limit: 10, // 10 requests per minute
+  },
 };
 
 /**
@@ -205,5 +210,6 @@ export const authRateLimit = createRateLimitMiddleware("auth");
 export const apiRateLimit = createRateLimitMiddleware("api");
 export const userRateLimit = createRateLimitMiddleware("user");
 export const publicRateLimit = createRateLimitMiddleware("public");
+export const statusRateLimit = createRateLimitMiddleware("status");
 
 export default createRateLimitMiddleware;

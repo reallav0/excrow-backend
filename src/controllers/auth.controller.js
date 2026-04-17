@@ -79,15 +79,32 @@ const ACCESS_TOKEN_EXPIRY = "15m";
 const ACCESS_COOKIE_MAX_AGE = 15 * 60 * 1000; // 15 min
 const REFRESH_COOKIE_MAX_AGE = 7 * 24 * 60 * 60 * 1000; // 7 days
 const SESSION_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000;
+
+function sanitizeEnvString(value) {
+  if (typeof value !== "string") return "";
+  return value.trim().replace(/^['"]|['"]$/g, "");
+}
+
+const GOOGLE_CLIENT_ID = sanitizeEnvString(process.env.GOOGLE_CLIENT_ID);
+const GOOGLE_CLIENT_SECRET = sanitizeEnvString(process.env.GOOGLE_CLIENT_SECRET);
+const DISCORD_CLIENT_ID = sanitizeEnvString(process.env.DISCORD_CLIENT_ID);
+const DISCORD_CLIENT_SECRET = sanitizeEnvString(process.env.DISCORD_CLIENT_SECRET);
+
 const GOOGLE_CALLBACK_URL =
-  process.env.GOOGLE_CALLBACK_URL || "http://localhost:3001/api/auth/google/callback";
+  sanitizeEnvString(process.env.GOOGLE_CALLBACK_URL) || "http://localhost:3001/api/auth/google/callback";
 const DISCORD_REDIRECT =
-  process.env.DISCORD_REDIRECT || "http://localhost:3001/api/auth/discord/callback";
+  sanitizeEnvString(process.env.DISCORD_REDIRECT) || "http://localhost:3001/api/auth/discord/callback";
+const FRONTEND_ORIGIN =
+  (process.env.FRONTEND_URL || "http://localhost:3000")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean)[0] || "http://localhost:3000";
+const OAUTH_SUCCESS_PATH = process.env.OAUTH_SUCCESS_PATH || "/dashboard";
 
 const hasGoogleOAuthConfig =
-  Boolean(process.env.GOOGLE_CLIENT_ID) && Boolean(process.env.GOOGLE_CLIENT_SECRET);
+  Boolean(GOOGLE_CLIENT_ID) && Boolean(GOOGLE_CLIENT_SECRET);
 const hasDiscordOAuthConfig =
-  Boolean(process.env.DISCORD_CLIENT_ID) && Boolean(process.env.DISCORD_CLIENT_SECRET);
+  Boolean(DISCORD_CLIENT_ID) && Boolean(DISCORD_CLIENT_SECRET);
 
 function setAuthCookies(res, accessToken, refreshToken) {
   res.cookie("accessToken", accessToken, {
@@ -108,6 +125,14 @@ function setAuthCookies(res, accessToken, refreshToken) {
 function clearAuthCookies(res) {
   res.clearCookie("accessToken");
   res.clearCookie("refreshToken", { path: "/api/auth" });
+}
+
+function buildFrontendRedirect(pathname = "/") {
+  try {
+    return new URL(pathname, FRONTEND_ORIGIN).toString();
+  } catch {
+    return `http://localhost:3000${pathname}`;
+  }
 }
 
 // Function to verify reCAPTCHA
@@ -321,8 +346,8 @@ if (hasGoogleOAuthConfig) {
   passport.use(
     new GoogleStrategy(
       {
-        clientID: process.env.GOOGLE_CLIENT_ID,
-        clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+        clientID: GOOGLE_CLIENT_ID,
+        clientSecret: GOOGLE_CLIENT_SECRET,
         callbackURL: GOOGLE_CALLBACK_URL,
       },
       async (_, __, profile, done) => done(null, profile)
@@ -389,7 +414,7 @@ router.get("/discord", requireDiscordOAuthConfig, (req, res) => {
   const state = generateState(res);
 
   const params = new URLSearchParams({
-    client_id: process.env.DISCORD_CLIENT_ID,
+    client_id: DISCORD_CLIENT_ID,
     redirect_uri: DISCORD_REDIRECT,
     response_type: "code",
     scope: "identify email",
@@ -420,8 +445,8 @@ router.get("/discord/callback", requireDiscordOAuthConfig, async (req, res) => {
     const tokenRes = await axios.post(
       "https://discord.com/api/oauth2/token",
       querystring.stringify({
-        client_id: process.env.DISCORD_CLIENT_ID,
-        client_secret: process.env.DISCORD_CLIENT_SECRET,
+        client_id: DISCORD_CLIENT_ID,
+        client_secret: DISCORD_CLIENT_SECRET,
         grant_type: "authorization_code",
         code,
         redirect_uri: DISCORD_REDIRECT,
@@ -474,6 +499,13 @@ router.get("/discord/callback", requireDiscordOAuthConfig, async (req, res) => {
     });
   } catch (err) {
     console.error("Discord OAuth Error:", err.response?.data || err);
+
+    if (err.response?.data?.error === "invalid_client") {
+      return res.status(500).json({
+        message: "Discord OAuth client configuration is invalid",
+      });
+    }
+
     res.status(500).json({ message: "Discord authentication failed" });
   }
 });
@@ -582,10 +614,7 @@ async function handleSocialLogin({
 
     setAuthCookies(res, accessToken, refreshToken);
 
-    res.status(200).json({
-      message: "Login successful",
-      username: user.username,
-    });
+    return res.redirect(302, buildFrontendRedirect(OAUTH_SUCCESS_PATH));
   } catch (err) {
     console.error(`${provider} login error:`, err);
     res.status(500).json({ message: "Authentication failed" });

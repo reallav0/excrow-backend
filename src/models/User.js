@@ -3,6 +3,21 @@ import { getDB } from "../config/db.js";
 import { createData } from "../models/Data.js"
 const COLLECTION = "users";
 
+function normalizeEmail(email) {
+  if (typeof email !== "string") return "";
+  return email.trim().toLowerCase();
+}
+
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function buildEmailQuery(email) {
+  const normalized = normalizeEmail(email);
+  if (!normalized) return null;
+  return { email: new RegExp(`^${escapeRegex(normalized)}$`, "i") };
+}
+
 /* ------------------------
    AUTO-INCREMENT userId
 ------------------------- */
@@ -22,9 +37,14 @@ async function getNextUserId(db) {
 ------------------------- */
 export async function createLocalUser({ username, email, password, birthdate }) {
   const db = getDB();
+  const normalizedEmail = normalizeEmail(email);
+
+  if (!normalizedEmail) {
+    throw new Error("Email is required");
+  }
 
   // Check if email exists
-  const existing = await db.collection(COLLECTION).findOne({ email });
+  const existing = await db.collection(COLLECTION).findOne(buildEmailQuery(normalizedEmail));
   if (existing) throw new Error("Email already in use");
 
   const userId = await getNextUserId(db);
@@ -32,7 +52,7 @@ export async function createLocalUser({ username, email, password, birthdate }) 
   
   const userDoc = {
     userId,
-    email,
+    email: normalizedEmail,
     username,
     displayName: username,
     avatar: null,
@@ -68,11 +88,21 @@ export async function createLocalUser({ username, email, password, birthdate }) 
 ------------------------- */
 export async function createOrUpdateOAuthUser(provider, data) {
   const db = getDB();
+  const normalizedEmail = normalizeEmail(data.email);
+
+  if (!normalizedEmail) {
+    throw new Error("Email is required for OAuth login");
+  }
 
   // Example `data`:
   // { email, providerId, username, avatar }
+  const providerLookupKey = `providers.${provider}.id`;
 
-  let user = await db.collection(COLLECTION).findOne({ email: data.email });
+  let user = await db.collection(COLLECTION).findOne({ [providerLookupKey]: data.providerId });
+
+  if (!user) {
+    user = await db.collection(COLLECTION).findOne(buildEmailQuery(normalizedEmail));
+  }
 
   // If user does NOT exist ➜ create new OAuth user
   if (!user) {
@@ -80,7 +110,7 @@ export async function createOrUpdateOAuthUser(provider, data) {
 
     const newUser = {
       userId,
-      email: data.email,
+      email: normalizedEmail,
       username: data.username || provider + "_" + userId,
       displayName: data.username,
       avatar: data.avatar,
@@ -106,7 +136,7 @@ export async function createOrUpdateOAuthUser(provider, data) {
 
     newUser.providers[provider] = {
       id: data.providerId,
-      email: data.email,
+      email: normalizedEmail,
       avatar: data.avatar,
       username: data.username,
     };
@@ -118,21 +148,23 @@ export async function createOrUpdateOAuthUser(provider, data) {
 
   // If EXISTS ➜ link provider
   await db.collection(COLLECTION).updateOne(
-    { email: data.email },
+    { userId: user.userId },
     {
       $set: {
+        email: normalizedEmail,
         [`providers.${provider}`]: {
           id: data.providerId,
-          email: data.email,
+          email: normalizedEmail,
           avatar: data.avatar,
           username: data.username,
         },
+        lastLogin: new Date(),
         updatedAt: new Date(),
       },
     }
   );
   
-  return await db.collection(COLLECTION).findOne({ email: data.email });
+  return await db.collection(COLLECTION).findOne({ userId: user.userId });
 }
 
 /* ------------------------
@@ -140,7 +172,9 @@ export async function createOrUpdateOAuthUser(provider, data) {
 ------------------------- */
 export async function findByEmail(email) {
   const db = getDB();
-  return db.collection(COLLECTION).findOne({ email });
+  const emailQuery = buildEmailQuery(email);
+  if (!emailQuery) return null;
+  return db.collection(COLLECTION).findOne(emailQuery);
 }
 
 export async function findByUsername(username) {

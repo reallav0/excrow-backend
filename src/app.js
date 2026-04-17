@@ -12,7 +12,7 @@ import adminRoutes from "./controllers/admin.controller.js";
 import platformRoutes from "./controllers/platform.controller.js";
 import cors from 'cors';
 import { apiLogger } from "./middleware/apiLogger.middleware.js";
-import { authRateLimit, apiRateLimit, userRateLimit, publicRateLimit } from "./middleware/rateLimit.middleware.js";
+import { authRateLimit, apiRateLimit, userRateLimit, publicRateLimit, statusRateLimit } from "./middleware/rateLimit.middleware.js";
 import { errorHandler, notFoundHandler } from "./middleware/error.middleware.js";
 
 const app = express();
@@ -54,8 +54,20 @@ app.use("/api/escrow/chat", apiRateLimit);
 app.use("/api/escrow/chat", chatRoutes);
 // Mount escrow routes on /api/escrows path as well for GET /api/escrows
 app.use("/api/escrows", escrowRoutes);
-app.use("/api/platform", publicRateLimit, platformRoutes);
-app.use("/api/admin", apiRateLimit, adminRoutes);
+app.use("/api/platform/status", statusRateLimit);
+app.use(
+	"/api/platform",
+	(req, res, next) => {
+		// /status has its own stricter limiter above.
+		if (req.path === "/status" || req.path === "/status/") {
+			return next();
+		}
+
+		return publicRateLimit(req, res, next);
+	},
+	platformRoutes,
+);
+app.use("/api/admin", adminRoutes);
 app.use("/api", userRateLimit); // User endpoints
 app.use("/api", userRoutes);
 app.use("/api", transactionRoutes);
