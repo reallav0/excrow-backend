@@ -92,15 +92,15 @@ const DISCORD_CLIENT_ID = sanitizeEnvString(process.env.DISCORD_CLIENT_ID);
 const DISCORD_CLIENT_SECRET = sanitizeEnvString(process.env.DISCORD_CLIENT_SECRET);
 
 const GOOGLE_CALLBACK_URL =
-  sanitizeEnvString(process.env.GOOGLE_CALLBACK_URL) || "http://localhost:3001/api/auth/google/callback";
+  sanitizeEnvString(process.env.GOOGLE_CALLBACK_URL);
 const DISCORD_REDIRECT =
-  sanitizeEnvString(process.env.DISCORD_REDIRECT) || "http://localhost:3001/api/auth/discord/callback";
+  sanitizeEnvString(process.env.DISCORD_REDIRECT);
 const FRONTEND_ORIGIN =
-  (process.env.FRONTEND_URL || "http://localhost:3000")
+  (process.env.FRONTEND_URL)
     .split(",")
     .map((origin) => origin.trim())
-    .filter(Boolean)[0] || "http://localhost:3000";
-const OAUTH_SUCCESS_PATH = process.env.OAUTH_SUCCESS_PATH || "/dashboard";
+    .filter(Boolean)[0];
+const OAUTH_SUCCESS_PATH = process.env.OAUTH_SUCCESS_PATH;
 
 const hasGoogleOAuthConfig =
   Boolean(GOOGLE_CLIENT_ID) && Boolean(GOOGLE_CLIENT_SECRET);
