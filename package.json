@@ -1,15 +1,30 @@
 {
-  "name": "backend",
+  "name": "excrow-backend",
   "version": "1.0.0",
+  "private": true,
   "main": "./src/index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node src/index.js",
+    "start:cluster": "node src/cluster.js",
+    "dev": "node --watch src/index.js",
+    "bench": "node bench/loadtest.mjs --url http://localhost:3001/health --connections 200 --duration 30",
+    "bench:quick": "node bench/loadtest.mjs --url http://localhost:3001/health --connections 100 --duration 10 --warmup 2",
+    "bench:10k": "node bench/loadtest.mjs --url http://localhost:3001/health --connections 900 --duration 60 --target-rps 10000",
+    "bench:shard-a": "node bench/loadtest.mjs --url http://localhost:3001/health --connections 400 --duration 60 --warmup 5 --target-rps 5000 --label \"generator A\"",
+    "bench:shard-b": "node bench/loadtest.mjs --url http://localhost:3001/health --connections 400 --duration 60 --warmup 5 --target-rps 5000 --label \"generator B\"",
+    "bench:status": "node bench/loadtest.mjs --url http://localhost:3001/api/platform/status --connections 200 --duration 30",
+    "bench:ready": "node bench/loadtest.mjs --url http://localhost:3001/ready --connections 100 --duration 30",
+    "bench:k6": "node bench/run-k6.mjs run bench/k6-loadtest.js",
+    "bench:k6:steady": "node bench/run-k6.mjs run bench/k6-loadtest.js -e MODE=steady -e RPS=10000 -e DURATION=60s",
+    "bench:autocannon": "npx --yes autocannon -c 200 -d 30 -p 1 http://localhost:3001/health"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": ["escrow", "express", "mongodb", "socket.io", "bitcoin", "litecoin"],
   "license": "ISC",
   "type": "module",
-  "description": "",
+  "description": "Escrow backend prototype with JWT sessions, real-time chat, admin APIs, and Bitcoin/Litecoin wallet utilities.",
+  "engines": {
+    "node": ">=20.19.0"
+  },
   "dependencies": {
     "axios": "^1.15.0",
     "bcrypt": "^6.0.0",
@@ -19,7 +34,6 @@
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
-    "ecpair": "^3.0.1",
     "express": "^4.22.1",
     "follow-redirects": "^1.16.0",
     "helmet": "^8.0.0",

@@ -1,7 +1,5 @@
 # Admin Backend API
 
-Last updated: 2026-03-17
-
 This document describes the implemented admin API in this backend.
 
 ## Base URL

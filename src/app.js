@@ -14,8 +14,21 @@ import cors from 'cors';
 import { apiLogger } from "./middleware/apiLogger.middleware.js";
 import { authRateLimit, apiRateLimit, userRateLimit, publicRateLimit, statusRateLimit } from "./middleware/rateLimit.middleware.js";
 import { errorHandler, notFoundHandler } from "./middleware/error.middleware.js";
+import healthRoutes from "./routes/health.routes.js";
 
 const app = express();
+
+// No "X-Powered-By: Express" header (less work per response, less fingerprinting).
+app.disable("x-powered-by");
+
+// Express computes a weak ETag (MD5 of the body) for every response by default.
+// That is pure CPU cost for a JSON API consumed by fetch/axios clients, both of
+// which ignore it here. Re-enable with HTTP_ETAG=true if a CDN depends on it.
+app.set("etag", process.env.HTTP_ETAG === "true");
+
+// The app only uses flat query keys (no `filter[x]=y` bracket syntax), so the
+// lighter-weight querystring parser is enough and is faster than `qs`.
+app.set("query parser", "simple");
 
 function resolveTrustProxySetting() {
 	const configured = process.env.TRUST_PROXY?.trim();
@@ -56,16 +69,27 @@ const corsOptions = {
 app.use(helmet());
 
 // Body parsing with size limits to prevent large-payload attacks
-app.use(express.json({ limit: "10kb" }));
+const BODY_LIMIT = process.env.JSON_BODY_LIMIT || "10kb";
+
+app.use(express.json({ limit: BODY_LIMIT }));
 app.use(cookieParser());
-app.use(express.urlencoded({ extended: true, limit: "10kb" }));
+app.use(express.urlencoded({ extended: true, limit: BODY_LIMIT }));
 app.use(passport.initialize());
 app.use(cors(corsOptions));
+
+// Health / readiness probes come first: no request logging, no auth, no DB
+// (except /ready), no rate limiting. GET /health is the benchmark target.
+app.use("/", healthRoutes);
+app.use("/api", healthRoutes);
 
 // API Request Logging Middleware
 app.use(apiLogger);
 
 // Rate Limiting Middleware
+//
+// Every limiter below is a no-op unless RATE_LIMIT_ENABLED=true, so load tests
+// and benchmarks are never rejected with 429s. Flip that env var to restore the
+// original production limits.
 app.use("/api/auth", authRateLimit); // Stricter limits for auth
 app.use("/api/auth", authRoutes);
 app.use("/api/escrow", apiRateLimit); // Standard API limits

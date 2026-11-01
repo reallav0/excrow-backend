@@ -11,7 +11,6 @@ RUN npm ci --omit=dev
 
 # Copy app source after dependencies are installed.
 COPY src ./src
-COPY ADMIN_API.md ./ADMIN_API.md
 
 # Ensure runtime writable directory exists for logs.
 RUN mkdir -p logs && chown -R node:node /usr/src/app

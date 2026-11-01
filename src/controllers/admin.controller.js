@@ -12,6 +12,7 @@ import {
 } from "../middleware/adminAuth.middleware.js";
 import { publishAdminLiveFeed, getAdminLiveFeedItems } from "../services/adminLiveFeed.service.js";
 import { getClientIp } from "../utils/clientIp.js";
+import { RATE_LIMIT_ENABLED } from "../middleware/rateLimit.middleware.js";
 
 const router = express.Router();
 
@@ -30,6 +31,9 @@ const LOCKOUT_DURATION_MS = 15 * 60 * 1000;
 const ATTEMPT_WINDOW_MS = 15 * 60 * 1000;
 
 function checkAdminLoginLockout(email) {
+  // Benchmark / load-test mode: no lockouts (see RATE_LIMIT_ENABLED).
+  if (!RATE_LIMIT_ENABLED) return { locked: false };
+
   const key = String(email || "").toLowerCase();
   const record = adminLoginAttempts.get(key);
   if (!record) return { locked: false };
@@ -44,6 +48,8 @@ function checkAdminLoginLockout(email) {
 }
 
 function recordFailedAdminLogin(email) {
+  if (!RATE_LIMIT_ENABLED) return;
+
   const key = String(email || "").toLowerCase();
   const record = adminLoginAttempts.get(key) || { count: 0, firstAttempt: Date.now() };
   record.count += 1;

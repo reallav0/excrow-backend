@@ -8,6 +8,11 @@ yarn-error.log*
 .env
 .env.*
 !.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
 
 # Logs
 logs/
@@ -16,9 +21,6 @@ logs/
 # Build
 dist/
 build/
-
-# test
-test/
 
 # OS
 .DS_Store
@@ -31,9 +33,22 @@ Thumbs.db
 # Temporary
 tmp/
 temp/
+*.tmp
+*.bak
+*.zip
+*.tar
+*.tar.gz
 
 # Mongo local dump
 dump/
+data/
+*.bson
+
+# Benchmark output
+bench/results/
+*.cpuprofile
+*.heapprofile
 
 # Coverage
 coverage/
+.nyc_output/

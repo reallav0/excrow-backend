@@ -1,0 +1,33 @@
+# Benchmark / load-test override.
+#
+#   docker compose -f compose.yaml -f compose.benchmark.yaml up --build
+#   docker compose -f compose.yaml -f compose.benchmark.yaml down
+#
+# Changes vs. the normal stack:
+#   * runs src/cluster.js so every CPU core is used (WEB_CONCURRENCY)
+#   * no rate limiting, no request logging, no log files, no ETag hashing
+#   * larger TCP backlog and file-descriptor limit for high connection counts
+
+services:
+  backend:
+    command: ["node", "src/cluster.js"]
+    environment:
+      NODE_ENV: production
+      PORT: ${PORT:-3001}
+      RATE_LIMIT_ENABLED: "false"
+      REQUEST_LOGGING: "false"
+      LOG_TO_FILE: "false"
+      HTTP_ETAG: "false"
+      # 0 = one worker per CPU core, 1 = single process.
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-0}
+      # Set true to benchmark the HTTP layer without MongoDB running at all.
+      SKIP_DB_CONNECT: ${SKIP_DB_CONNECT:-false}
+      LISTEN_BACKLOG: "4096"
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    sysctls:
+      net.core.somaxconn: 4096
+      net.ipv4.tcp_max_syn_backlog: 4096
+    stop_grace_period: 20s

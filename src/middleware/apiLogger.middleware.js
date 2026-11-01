@@ -2,6 +2,36 @@ import { logger } from "../utils/logger.js";
 import { getClientIp } from "../utils/clientIp.js";
 
 /**
+ * Request logging middleware.
+ *
+ * Performance knobs (all optional):
+ *   REQUEST_LOGGING=false          disable request logging entirely (zero overhead)
+ *   REQUEST_LOG_SAMPLE_RATE=0.01   log 1% of requests (0 disables, 1 logs everything)
+ *
+ * The middleware never touches `res.send`, so a disabled logger costs one
+ * comparison per request.
+ */
+
+const REQUEST_LOGGING_ENABLED = process.env.REQUEST_LOGGING !== "false";
+
+const parsedSampleRate = Number.parseFloat(process.env.REQUEST_LOG_SAMPLE_RATE ?? "");
+const REQUEST_LOG_SAMPLE_RATE = Number.isFinite(parsedSampleRate)
+  ? Math.min(Math.max(parsedSampleRate, 0), 1)
+  : 1;
+
+// Health/benchmark probes are hit constantly and carry no signal.
+const IGNORED_PATHS = new Set([
+  "/health",
+  "/healthz",
+  "/livez",
+  "/ready",
+  "/readyz",
+  "/api/health",
+  "/api/ready",
+  "/favicon.ico",
+]);
+
+/**
  * Sensitive fields that should never appear in logs.
  */
 const SENSITIVE_FIELDS = new Set([
@@ -26,16 +56,27 @@ function sanitizeBody(body) {
 
 /**
  * API Request Logging Middleware
- * Logs all incoming API requests with endpoint, method, query params, and body.
- * Sensitive fields (passwords, tokens) are redacted from logs.
+ * Logs incoming API requests and their response status/duration.
  */
 export const apiLogger = (req, res, next) => {
+  if (!REQUEST_LOGGING_ENABLED || REQUEST_LOG_SAMPLE_RATE <= 0) {
+    return next();
+  }
+
+  const path = req.path;
+  if (IGNORED_PATHS.has(path)) {
+    return next();
+  }
+
+  if (REQUEST_LOG_SAMPLE_RATE < 1 && Math.random() >= REQUEST_LOG_SAMPLE_RATE) {
+    return next();
+  }
+
   const startTime = Date.now();
 
-  // Log incoming request (with sanitised body)
   const requestData = {
     method: req.method,
-    endpoint: req.path,
+    endpoint: path,
     queryParams: Object.keys(req.query).length > 0 ? req.query : null,
     body: req.body && Object.keys(req.body).length > 0 ? sanitizeBody(req.body) : null,
     ip: getClientIp(req),
@@ -44,26 +85,19 @@ export const apiLogger = (req, res, next) => {
 
   logger.api(
     req.method,
-    req.path,
+    path,
     "INCOMING",
-    requestData.body || requestData.queryParams || null
+    requestData.body || requestData.queryParams || null,
   );
 
-  // Intercept response
-  const originalSend = res.send;
-  res.send = function (data) {
-    const duration = Date.now() - startTime;
-    
-    // Log response
-    logger.api(req.method, req.path, res.statusCode, {
-      duration: `${duration}ms`,
+  // Log the response once it is actually flushed to the socket.
+  res.once("finish", () => {
+    logger.api(req.method, path, res.statusCode, {
+      duration: `${Date.now() - startTime}ms`,
     });
+  });
 
-    // Call original send
-    return originalSend.call(this, data);
-  };
-
-  next();
+  return next();
 };
 
 export default apiLogger;

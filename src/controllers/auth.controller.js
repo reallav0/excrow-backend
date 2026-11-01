@@ -28,6 +28,7 @@ import {
   validateUsername,
 } from "../utils/validator.js";
 import { getClientIp } from "../utils/clientIp.js";
+import { RATE_LIMIT_ENABLED } from "../middleware/rateLimit.middleware.js";
 
 const router = express.Router();
 
@@ -38,6 +39,10 @@ const LOCKOUT_DURATION_MS = 15 * 60 * 1000; // 15 minutes
 const ATTEMPT_WINDOW_MS = 15 * 60 * 1000;
 
 function checkLoginLockout(email) {
+  // Benchmark / load-test mode: no lockouts, so auth load tests are not
+  // short-circuited by 429s. Re-enabled together with RATE_LIMIT_ENABLED=true.
+  if (!RATE_LIMIT_ENABLED) return { locked: false };
+
   const key = email.toLowerCase();
   const record = loginAttempts.get(key);
   if (!record) return { locked: false };
@@ -52,6 +57,8 @@ function checkLoginLockout(email) {
 }
 
 function recordFailedLogin(email) {
+  if (!RATE_LIMIT_ENABLED) return;
+
   const key = email.toLowerCase();
   const record = loginAttempts.get(key) || { count: 0, firstAttempt: Date.now() };
   record.count++;

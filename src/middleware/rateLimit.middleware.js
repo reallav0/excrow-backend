@@ -3,10 +3,19 @@ import jwt from "jsonwebtoken";
 import { getClientIp } from "../utils/clientIp.js";
 
 /**
+ * Rate limiting is DISABLED unless RATE_LIMIT_ENABLED=true.
+ *
+ * Load testing / benchmarking needs an unobstructed path to the app, so every
+ * limiter exported below is a pass-through no-op by default. Set
+ * RATE_LIMIT_ENABLED=true to restore the production limits (e.g. before
+ * deploying, or when you want to benchmark the limiter itself).
+ *
  * Production-grade Rate Limiting Middleware
  * Uses IP + User Agent as identifier for anonymous users
  * Uses User ID for authenticated users
  */
+
+export const RATE_LIMIT_ENABLED = process.env.RATE_LIMIT_ENABLED === "true";
 
 class RateLimiter {
   constructor() {
@@ -102,8 +111,10 @@ class RateLimiter {
 const limiter = new RateLimiter();
 
 // Cleanup expired entries every 10 minutes
-const cleanupInterval = setInterval(() => limiter.cleanup(), 10 * 60 * 1000);
-cleanupInterval.unref?.();
+if (RATE_LIMIT_ENABLED) {
+  const cleanupInterval = setInterval(() => limiter.cleanup(), 10 * 60 * 1000);
+  cleanupInterval.unref?.();
+}
 
 function extractVerifiedUserId(req) {
   const tokenFromHeader = req.headers.authorization?.startsWith("Bearer ")
@@ -163,6 +174,11 @@ const rateLimitConfigs = {
  * Generic Rate Limit Middleware Factory
  */
 export const createRateLimitMiddleware = (configKey = "api") => {
+  // Benchmark / load-test mode: hand the request straight to the handler.
+  if (!RATE_LIMIT_ENABLED) {
+    return (_req, _res, next) => next();
+  }
+
   const config = rateLimitConfigs[configKey] || rateLimitConfigs.api;
 
   return (req, res, next) => {

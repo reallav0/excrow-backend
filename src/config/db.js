@@ -2,22 +2,27 @@
 import { MongoClient } from "mongodb";
 import dotenv from "dotenv";
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 const uri = process.env.MONGO_URI;
 const dbName = "number0";
-
-if (!uri) {
-  console.error("❌ MONGO_URI is missing in environment configuration");
-  process.exit(1);
-}
 
 let db = null;
 let client = null;
 
 export async function connectDB() {
+  if (!uri) {
+    console.error("❌ MONGO_URI is missing in environment configuration");
+    process.exit(1);
+  }
+
   try {
-    client = new MongoClient(uri);
+    client = new MongoClient(uri, {
+      // A bigger pool keeps DB-backed endpoints alive under load tests.
+      maxPoolSize: Number(process.env.MONGO_MAX_POOL_SIZE) || 50,
+      minPoolSize: Number(process.env.MONGO_MIN_POOL_SIZE) || 0,
+      serverSelectionTimeoutMS: Number(process.env.MONGO_SERVER_SELECTION_TIMEOUT_MS) || 10_000,
+    });
     await client.connect();
 
     db = client.db(dbName);
